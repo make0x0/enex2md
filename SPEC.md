@@ -18,6 +18,9 @@ Evernoteからエクスポートされた `.enex` ファイルを読み込み、
     - **CLI引数解析**: `argparse`
     - **パス操作**: `pathlib`, `glob`, `os.path`
     - **その他**: `base64`, `hashlib`, `mimetypes`, `logging`
+    - **PDF生成**: `weasyprint`
+    - **OCR**: `pytesseract` (Tesseract OCR wrapper)
+    - **並列処理**: `concurrent.futures`
     - **暗号化対応**:
         - HTML出力時、暗号化箇所をブラウザで復号するためのJavaScriptライブラリ (`crypto-js`) を利用する。
         - 外部CDNには依存せず、成果物ディレクトリにライブラリのファイルを自動コピーする。
@@ -31,7 +34,8 @@ Evernoteからエクスポートされた `.enex` ファイルを読み込み、
 - **パス指定**: ファイルまたはディレクトリ（複数可）。
 - **再帰オプション**: `-r` / `--recursive`
 - **出力先指定**: `-o` / `--output`
-- **フォーマット指定（オプション）**: `--format html,markdown` (設定ファイルを上書き)
+- **出力先指定**: `-o` / `--output`
+- **フォーマット指定（オプション）**: `--format html,markdown,pdf` (設定ファイルを上書き)
 - **設定ファイルひな形生成**: `--init-config`
     - 現在のディレクトリにデフォルトの `config.yaml` を生成して終了する。
 
@@ -60,7 +64,13 @@ Evernoteからエクスポートされた `.enex` ファイルを読み込み、
   │       │   └── note_contents/            # ノート自体の添付ファイル
   │       │       ├── image001.png
   │       │       └── doc.pdf
+  │       │       └── doc.pdf
   │       └── ...
+  └── _PDF/                         # PDFのみのクリーンフォルダ
+      └── Work/
+          └── ProjectA/
+              └── 2023-01-01_会議議事録/
+                  └── 会議議事録.pdf
 ```
 
 ## 4. 設定ファイル仕様 (config.yaml)
@@ -78,9 +88,8 @@ output:
   filename_sanitize_char: "_"
   
   # 出力フォーマットのリスト
-  # 指定可能な値: "html", "markdown"
-  # 両方出力する場合: ["html", "markdown"]
-  formats: ["html", "markdown"]
+  # 指定可能な値: "html", "markdown", "pdf"
+  formats: ["html", "markdown", "pdf"]
 
 content:
   html_template: "./template.html"
@@ -91,6 +100,14 @@ markdown:
   add_front_matter: true
   # Markdown内の改行処理（バックスラッシュをエスケープするか等）
   heading_style: "atx" # atx (# Heading) or setext (Heading\n===)
+
+ocr:
+  enabled: true
+  language: "jpn"
+  workers: 2
+
+processing:
+  note_workers: 1 # ノート並列数（※WeasyPrintの競合回避のため1推奨）
 
 logging:
   level: "INFO"
@@ -109,12 +126,21 @@ logging:
 #### Step 1: メタデータ抽出
 Title, Created Date, Updated Date, Tags, Author, Source URL 等を取得。
 
+#### Step 1.5: 処理再開チェック (Resume)
+`_PDF` フォルダ内に該当ノートのPDF（フォルダ名にハッシュ接尾辞がある場合も考慮）が既に存在する場合、処理をスキップし、ログに "Skipping already processed" を出力する。
+
 #### Step 2: ノートフォルダ作成
 フォルダ名: `target_dir / f"{date_str}_{sanitized_title}"` を作成。
 
-#### Step 3: リソース抽出・保存
+#### Step 3: リソース抽出・保存・OCR
 `<resource>` タグ解析 -> Base64デコード -> MD5ハッシュ計算 -> ファイル保存。
 `dict_hash_to_filename` マッピングを作成。
+
+**OCR処理 (有効な場合)**:
+- Tesseractを使用して画像からテキスト位置情報付きのOCRデータを抽出する。
+- 認識データは `.xml` (テキストのみ) および `.ocr.json` (位置情報付き) として保存される。
+- これによりPDF上でテキスト検索およびハイライトが可能になる。
+- 処理は `ocr.workers` で指定されたスレッド数で並列実行される（ログには `[Ocr-W*]` と表示）。
 
 **Markdown特有の考慮**: Markdownは埋め込み（Base64）を標準サポートしないため、必ずファイルとして保存する。
 
@@ -137,6 +163,19 @@ Title, Created Date, Updated Date, Tags, Author, Source URL 等を取得。
 **HTML出力処理** (`output.formats` に `"html"` が含まれる場合):
 1. 中間HTMLをテンプレートに埋め込む。
 2. `index.html` として保存。
+
+**PDF出力処理** (`output.formats` に `"pdf"` が含まれる場合):
+1. **WeasyPrintによる生成**: 中間HTMLをベースにPDFを生成する。
+2. **スタイリング**:
+   - `presentational_hints=True` で背景色を維持。
+   - 画像がページからはみ出さないようCSSで調整 (`max-height`, `page-break` 制御)。
+3. **OCRテキスト埋め込み**:
+   - `.ocr.json` の位置情報を使用し、画像上の正確な位置に透明テキスト (`color: transparent`) を配置する。これにより見た目を損なわずに検索可能とする。
+4. **出力**:
+   - ノートフォルダ内に保存。
+   - さらに `_PDF/` フォルダへコピーを作成（閲覧用）。
+5. **スマートPDFモード**:
+   - オリジナルのPDF添付ファイルがある場合、再生成せずにそのPDFをコピーして成果物とする。
 
 **Markdown出力処理** (`output.formats` に `"markdown"` が含まれる場合):
 1. **変換**: 中間HTMLを `markdownify` 等のライブラリに渡し、Markdownテキストに変換する。
@@ -209,3 +248,8 @@ Markdownファイル（`content.md`）と画像ファイルは同じフォルダ
     - [CryptoJS](https://github.com/brix/crypto-js) などのライブラリを使用する。
     - PBKDF2 でパスワードからキーとIVを生成し、復号を試みるロジックを `decrypt_note.js` として生成・同梱する。
     - 外部ネットワーク接続不要で動作させるため、ライブラリ本体も `lib/` フォルダなどに配置する。
+
+### 9.5 PDF生成とOCRの技術詳細
+- **画像サイズ制限**: WeasyPrintは `object-fit` のサポートが不完全なため、CSSで `max-height: 270mm` (A4サイズ - マージン) を指定し、画像がページからはみ出さないように制御する。
+- **OCR位置あわせ**: Tesseractの出力するバウンディングボックス (`left`, `top`, `width`, `height`) を画像のピクセル幅・高さに対するパーセンテージに変換し、PDF上に `absolute` 配置された `<span>` 要素として埋め込む。これにより、レスポンシブな画像サイズ変更にも追従可能とする。
+- **並列処理の注意点**: WeasyPrint (および依存する `fontTools`) はスレッドセーフではない部分があるため、ノート単位の並列処理 (`note_workers`) を行うと競合エラーが発生する場合がある。これを回避するため、デフォルトでは `note_workers: 1` とし、OCR処理のみを並列化 (`ocr.workers`) する設計とする。

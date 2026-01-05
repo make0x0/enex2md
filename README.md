@@ -142,11 +142,11 @@ ocr:
 
 ```yaml
 processing:
-  note_workers: 1    # ノート並列処理のワーカー数 (⚠️ 1のまま使用してください)
+  note_workers: 1    # ノート並列処理のワーカー数 (デフォルト: 1)
 ```
 
-> [!CAUTION]
-> `note_workers` を2以上に設定すると、WeasyPrintのスレッドセーフティ問題によりOCRが失敗することがあります。**1のまま使用してください。** OCR並列処理（`ocr.workers`）は問題なく動作します。
+> [!WARNING]
+> `note_workers` を増やすと処理速度が向上しますが、WeasyPrintやTesseractのリソース競合によりOCRエラーが発生する可能性があります。エラーが頻発する場合は **1** に戻してください。
 
 ### ログ設定
 
@@ -154,6 +154,10 @@ processing:
 logging:
   level: "INFO"   # ログレベル (DEBUG, INFO, WARNING, ERROR)
 ```
+
+ログには処理を行っているワーカーIDが表示されます：
+- `[Note-W*]`: ノート変換プロセス
+- `[Ocr-W*]`: OCR処理スレッド
 
 ## 機能
 
