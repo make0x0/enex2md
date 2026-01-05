@@ -6,6 +6,11 @@ import logging
 import shutil
 from pathlib import Path
 
+# Suppress noisy third-party loggers BEFORE they are imported
+logging.getLogger('weasyprint').setLevel(logging.ERROR)
+logging.getLogger('fontTools').setLevel(logging.ERROR)
+logging.getLogger('fontTools.subset').setLevel(logging.ERROR)
+
 from src.parser import NoteParser
 from src.converter import NoteConverter
 from src.formatter_html import HtmlFormatter
