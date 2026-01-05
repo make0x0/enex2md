@@ -106,6 +106,20 @@ class NoteConverter:
                 
                 if mime.startswith('image/'):
                     new_tag = soup.new_tag('img', src=link_path, alt=filename)
+                elif mime == 'application/pdf':
+                    # Embed PDF for preview
+                    # Use object tag for better compatibility and fallback
+                    new_tag = soup.new_tag('object', data=link_path, type="application/pdf")
+                    new_tag['width'] = "100%"
+                    new_tag['height'] = "600px" # Default height
+                    
+                    # Fallback content
+                    p = soup.new_tag('p')
+                    p.string = f"PDF cannot be displayed. "
+                    a = soup.new_tag('a', href=link_path)
+                    a.string = f"Download {filename}"
+                    p.append(a)
+                    new_tag.append(p)
                 else:
                     new_tag = soup.new_tag('a', href=link_path)
                     new_tag.string = filename
