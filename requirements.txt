@@ -6,3 +6,4 @@ python-dateutil
 pytesseract
 Pillow
 weasyprint
+reverse_geocoder

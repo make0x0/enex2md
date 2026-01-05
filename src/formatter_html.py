@@ -46,6 +46,12 @@ class HtmlFormatter:
             created_p.string = f"Created: {note_data.get('created', '')}"
             meta_div.append(created_p)
             
+            updated_date = note_data.get('updated')
+            if updated_date:
+                updated_p = soup.new_tag('p')
+                updated_p.string = f"Updated: {updated_date}"
+                meta_div.append(updated_p)
+            
             tags = note_data.get('tags', [])
             if tags:
                 tags_p = soup.new_tag('p')
@@ -55,8 +61,9 @@ class HtmlFormatter:
             source_url = note_data.get('source_url')
             if source_url:
                 url_p = soup.new_tag('p')
-                url_a = soup.new_tag('a', href=source_url)
-                url_a.string = "Source URL"
+                url_a = soup.new_tag('a', href=source_url, target="_blank", rel="noopener noreferrer")
+                url_a.string = f"Source URL: {source_url}"
+                url_p.append(url_a)
                 meta_div.append(url_p)
                 
             location = note_data.get('location', {})
@@ -64,11 +71,28 @@ class HtmlFormatter:
             if add_loc and location.get('latitude') and location.get('longitude'):
                 lat = location['latitude']
                 lon = location['longitude']
+                
+                # Reverse Geoding
+                loc_name = ""
+                try:
+                    import reverse_geocoder as rg
+                    # rg.search returns a list of dicts, we take the first one
+                    results = rg.search((lat, lon))
+                    if results:
+                        # e.g., {'name': 'Tokyo', 'admin1': 'Tokyo', 'cc': 'JP'}
+                        r = results[0]
+                        loc_name = f"{r.get('name', '')}, {r.get('cc', '')}"
+                except ImportError:
+                    pass
+                except Exception as e:
+                    logging.warning(f"Reverse geocoding failed: {e}")
+                
                 loc_p = soup.new_tag('p')
                 # Google Maps link
                 map_url = f"https://www.google.com/maps/search/?api=1&query={lat},{lon}"
                 loc_a = soup.new_tag('a', href=map_url, target="_blank", rel="noopener noreferrer")
-                loc_a.string = f"📍 Location ({lat}, {lon})"
+                display_text = f"📍 Location: {loc_name} ({lat:.4f}, {lon:.4f})" if loc_name else f"📍 Location ({lat:.4f}, {lon:.4f})"
+                loc_a.string = display_text
                 loc_p.append(loc_a)
                 meta_div.append(loc_p)
 
