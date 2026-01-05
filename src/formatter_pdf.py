@@ -131,6 +131,17 @@ class PdfFormatter(HtmlFormatter):
                 page-break-inside: avoid;
                 page-break-before: auto;
             }
+            /* Robust fallbacks for form elements that might lack default styles */
+            input, button, select, textarea, fieldset, legend, optgroup, option {
+                color: black;
+                border: 1px solid gray;
+                background-color: white;
+            }
+            /* Interactive elements that might be missing styles */
+            details, summary {
+                color: black;
+                display: block;
+            }
         """
         if soup.head:
             soup.head.append(pdf_style)
