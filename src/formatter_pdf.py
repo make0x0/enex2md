@@ -2,6 +2,7 @@ import logging
 import base64
 import hashlib
 import re
+import os
 import mimetypes
 import shutil
 from pathlib import Path
