@@ -138,6 +138,11 @@ def main():
         ]
     )
     
+    # Suppress noisy third-party loggers
+    logging.getLogger('weasyprint').setLevel(logging.ERROR)
+    logging.getLogger('fontTools').setLevel(logging.ERROR)
+    logging.getLogger('fontTools.subset').setLevel(logging.ERROR)
+    
     logging.info(f"Starting conversion. Target: {target_path}, Recursive: {recursive}")
     logging.info(f"Logging to file: {log_file_path}")
     

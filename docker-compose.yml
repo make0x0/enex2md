@@ -1,5 +1,6 @@
 services:
   app:
+    platform: linux/arm64 # Native ARM64 for Apple Silicon (no emulation)
     build: .
     volumes:
       - .:/app
