@@ -85,6 +85,7 @@ def process_enex(enex_path, config, converter, html_formatter, md_formatter=None
             
             # Check for PDF in _PDF folder (with or without hash suffix)
             pdf_base_path = base_output_root / "_PDF" / enex_stem
+            should_skip = False
             if pdf_base_path.exists():
                 # Match folders with pattern: dir_name or dir_name_xxxx (hash suffix)
                 matching_folders = list(pdf_base_path.glob(f"{dir_name}*"))
@@ -94,13 +95,11 @@ def process_enex(enex_path, config, converter, html_formatter, md_formatter=None
                         if existing_pdfs:
                             logging.debug(f"Skipping already processed: {title}")
                             skipped += 1
+                            should_skip = True
                             break
-                else:
-                    # No matching folder with PDF found, continue processing
-                    pass
-                if skipped > 0 and matching_folders:
-                    # If we incremented skipped in the loop, skip this note
-                    continue
+            
+            if should_skip:
+                continue
             
             target_dir, intermediate_html, title, created, full_data = converter.convert_note(note_data)
             
