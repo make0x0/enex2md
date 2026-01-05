@@ -20,3 +20,7 @@ config.yaml
 
 # Assets downloaded at build/runtime
 assets/crypto-js.min.js
+
+# 
+my_output/
+output/

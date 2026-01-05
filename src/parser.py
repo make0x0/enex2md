@@ -16,7 +16,7 @@ class NoteParser:
             # Clear element to save memory
             elem.clear()
             while elem.getprevious() is not None:
-                del elem.getParent()[0]
+                del elem.getparent()[0]
         del context
 
     def _extract_note_data(self, note_elem):

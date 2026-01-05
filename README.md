@@ -55,6 +55,15 @@ docker compose run --rm app -r path/to/EnexFolder
 docker compose run --rm app path/to/note.enex -o ./my_output --format markdown
 ```
 
+### 外部ディレクトリ（プロジェクト外）のファイルを変換する場合
+
+Dockerコンテナはプロジェクト外のファイルに直接アクセスできないため、`-v` オプションでマウントする必要があります。
+
+```bash
+# ホストの /absolute/path/to/data をコンテナ内の /data としてマウントして処理
+docker compose run --rm -v /absolute/path/to/data:/data app -r /data -o ./my_output
+```
+
 ## 出力構造
 
 設定された出力ディレクトリ（デフォルト: `Converted_Notes`）配下に、以下のように出力されます。
