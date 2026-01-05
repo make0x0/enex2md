@@ -61,9 +61,31 @@ def process_enex(enex_path, config, converter, html_formatter, md_formatter=None
     
     parser = NoteParser(enex_path)
     count = 0
+    skipped = 0
+    
+    # Get output root for checking existing PDFs
+    base_output_root = Path(config.get('output', {}).get('root_dir', 'Converted_Notes'))
+    enex_stem = Path(enex_path).stem
     
     for note_data in parser.parse():
         try:
+            title = note_data.get('title', 'Untitled')
+            created = note_data.get('created')
+            
+            # Check if this note is already processed (PDF exists in _PDF folder)
+            date_str = created.strftime(converter.date_format) if created else "NoDate"
+            sanitized_title = converter._sanitize_filename(title)
+            dir_name = f"{date_str}_{sanitized_title}"
+            
+            # Check for PDF in _PDF folder
+            pdf_check_path = base_output_root / "_PDF" / enex_stem / dir_name
+            if pdf_check_path.exists():
+                existing_pdfs = list(pdf_check_path.glob("*.pdf"))
+                if existing_pdfs:
+                    logging.debug(f"Skipping already processed: {title}")
+                    skipped += 1
+                    continue
+            
             target_dir, intermediate_html, title, created, full_data = converter.convert_note(note_data)
             
             # Generate HTML
@@ -82,7 +104,10 @@ def process_enex(enex_path, config, converter, html_formatter, md_formatter=None
         except Exception as e:
             logging.error(f"Error converting note '{note_data.get('title')}': {e}", exc_info=True)
 
-    logging.info(f"Finished {enex_path}: {count} notes converted.")
+    if skipped > 0:
+        logging.info(f"Finished {enex_path}: {count} notes converted, {skipped} skipped (already processed).")
+    else:
+        logging.info(f"Finished {enex_path}: {count} notes converted.")
 
 def main():
     parser = argparse.ArgumentParser(description="Convert Evernote .enex files to HTML/Markdown.")
