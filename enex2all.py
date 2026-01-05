@@ -60,7 +60,12 @@ def process_enex(enex_path, config):
     logging.info(f"Processing ENEX file: {enex_path}")
     
     # Initialize components
-    output_root = config.get('output', {}).get('root_dir', 'Converted_Notes')
+    base_output_root = config.get('output', {}).get('root_dir', 'Converted_Notes')
+    
+    # Create a subfolder for this ENEX file
+    enex_stem = Path(enex_path).stem
+    output_root = Path(base_output_root) / enex_stem
+    
     parser = NoteParser(enex_path)
     converter = NoteConverter(output_root, config)
     

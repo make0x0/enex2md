@@ -70,12 +70,15 @@ docker compose run --rm -v /absolute/path/to/data:/data app -r /data -o ./my_out
 
 ```text
 Converted_Notes/
-  ├── 2023-01-01_会議議事録/
-  │   ├── index.html                # HTML版 (ブラウザ閲覧用)
-  │   ├── content.md                # Markdown版 (Obsidian等用)
-  │   ├── image.png                 # 添付ファイル
-  │   ├── crypto-js.min.js          # 暗号化復号用ライブラリ
-  │   └── decrypt_note.js           # 復号ロジック
+  ├── MyNotes/                      # ENEXファイル名に基づくフォルダ
+  │   └── 2023-01-01_会議議事録/
+  │       ├── index.html            # HTML版 (ブラウザ閲覧用)
+  │       ├── content.md            # Markdown版 (Obsidian等用)
+  │       ├── image.png             # 添付ファイル
+  │       ├── crypto-js.min.js      # 暗号化復号用ライブラリ
+  │       └── decrypt_note.js       # 復号ロジック
+  ├── OtherNotes/
+  │   └── ...
 ```
 
 ## ライセンス
