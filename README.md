@@ -120,6 +120,7 @@ output:
 
 content:
   embed_images: false   # 画像をBase64埋め込み (HTMLのみ)
+  add_location_link: true # 位置情報がある場合、Google Mapsへのリンクを追加するか
 
 markdown:
   add_front_matter: true    # YAML Front Matter を追加

@@ -50,8 +50,10 @@ class NoteParser:
                 try:
                     location['latitude'] = float(lat_str)
                     location['longitude'] = float(lon_str)
+                    import logging
+                    logging.info(f"📍 Location found for '{title}': {lat_str}, {lon_str}")
                 except ValueError:
-                    pass
+                    logging.debug(f"Invalid location data for '{title}': {lat_str}, {lon_str}")
 
         return {
             'title': title,

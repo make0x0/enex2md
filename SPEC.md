@@ -163,7 +163,10 @@ Title, Created Date, Updated Date, Tags, Author, Source URL, **Location (Lat/Lon
 
 **HTML出力処理** (`output.formats` に `"html"` が含まれる場合):
 1. 中間HTMLをテンプレートに埋め込む。
-2. `index.html` として保存。
+2. **Metadata Injection**:
+   - Title, Created/Updated, Tags, Source URL を表示。
+   - **Location**: `reverse_geocoder` を使用して座標から「都市名, 国」を取得し、Google Mapsリンクと共に表示する。
+3. `index.html` として保存。
 
 **PDF出力処理** (`output.formats` に `"pdf"` が含まれる場合):
 1. **WeasyPrintによる生成**: 中間HTMLをベースにPDFを生成する。

@@ -41,20 +41,53 @@ class PdfFormatter(HtmlFormatter):
             created_p.string = f"Created: {note_data.get('created', '')}"
             meta_div.append(created_p)
             
+            updated_date = note_data.get('updated')
+            if updated_date:
+                updated_p = soup.new_tag('p')
+                updated_p.string = f"Updated: {updated_date}"
+                meta_div.append(updated_p)
+            
             tags = note_data.get('tags', [])
             if tags:
                 tags_p = soup.new_tag('p')
                 tags_p.string = f"Tags: {', '.join(tags)}"
                 meta_div.append(tags_p)
             
-            # Source URL often useful in PDF too
             source_url = note_data.get('source_url')
             if source_url:
                 url_p = soup.new_tag('p')
                 url_a = soup.new_tag('a', href=source_url)
-                url_a.string = "Source URL"
+                url_a.string = f"Source URL: {source_url}"
                 url_p.append(url_a)
                 meta_div.append(url_p)
+                
+            location = note_data.get('location', {})
+            add_loc = self.config.get('content', {}).get('add_location_link', True)
+            if add_loc and location.get('latitude') and location.get('longitude'):
+                lat = location['latitude']
+                lon = location['longitude']
+                
+                # Reverse Geoding (Offline)
+                loc_name = ""
+                try:
+                    import reverse_geocoder as rg
+                    # rg.search returns a list of dicts, we take the first one
+                    results = rg.search((lat, lon))
+                    if results:
+                        r = results[0]
+                        loc_name = f"{r.get('name', '')}, {r.get('cc', '')}"
+                except ImportError:
+                    pass
+                except Exception as e:
+                    logging.warning(f"Reverse geocoding failed: {e}")
+                
+                loc_p = soup.new_tag('p')
+                map_url = f"https://www.google.com/maps/search/?api=1&query={lat},{lon}"
+                loc_a = soup.new_tag('a', href=map_url)
+                display_text = f"📍 Location: {loc_name} ({lat:.4f}, {lon:.4f})" if loc_name else f"📍 Location ({lat:.4f}, {lon:.4f})"
+                loc_a.string = display_text
+                loc_p.append(loc_a)
+                meta_div.append(loc_p)
 
         # Update Heading
         h1 = soup.find('h1')
