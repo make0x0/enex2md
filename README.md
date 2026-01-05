@@ -85,15 +85,95 @@ Converted_Notes/
   │   └── 2023-01-01_会議議事録/
   │       ├── index.html            # HTML版 (ブラウザ閲覧用)
   │       ├── content.md            # Markdown版 (Obsidian等用)
+  │       ├── 会議議事録.pdf         # PDF版 (検索可能)
   │       ├── _assets/              # 生成用アセット (JS)
   │       │   ├── crypto-js.min.js
   │       │   └── decrypt_note.js
   │       └── note_contents/        # ノート添付ファイル
   │           ├── image.png
+  │           ├── image.png.xml     # OCR認識データ
+  │           ├── image.png.ocr.json  # OCR位置情報
   │           └── doc.pdf
   ├── OtherNotes/
   │   └── ...
+  └── _PDF/                         # PDFのみのクリーンフォルダ
+      └── MyNotes/
+          └── 2023-01-01_会議議事録/
+              └── 会議議事録.pdf
 ```
+
+## 設定オプション (config.yaml)
+
+`--init-config` で生成される `config.yaml` には以下のオプションがあります:
+
+### 基本設定
+
+```yaml
+input:
+  default_path: "."           # デフォルトの入力パス
+  default_recursive: false    # デフォルトで再帰検索するか
+
+output:
+  root_dir: "./Converted_Notes"   # 出力ルートディレクトリ
+  date_format: "%Y-%m-%d"         # ファイル名の日付フォーマット
+  filename_sanitize_char: "_"     # ファイル名禁止文字の置換文字
+  formats: ["html", "markdown", "pdf"]  # 出力フォーマット
+
+content:
+  embed_images: false   # 画像をBase64埋め込み (HTMLのみ)
+
+markdown:
+  add_front_matter: true    # YAML Front Matter を追加
+  heading_style: "atx"      # 見出しスタイル (atx or setext)
+```
+
+### OCR設定
+
+画像からテキストを抽出し、PDF内で検索可能にします。
+
+```yaml
+ocr:
+  enabled: true      # OCRを有効化
+  language: "jpn"    # Tesseract言語 (jpn, eng, jpn+eng など)
+  workers: 2         # OCR並列処理のワーカー数 (推奨: 2-4)
+```
+
+### 並列処理設定
+
+大量のノートを高速に処理するための設定です。
+
+```yaml
+processing:
+  note_workers: 2    # ノート並列処理のワーカー数
+```
+
+**注意**: `note_workers × ocr.workers` がCPUコア数を超えないようにしてください。
+
+### ログ設定
+
+```yaml
+logging:
+  level: "INFO"   # ログレベル (DEBUG, INFO, WARNING, ERROR)
+```
+
+## 機能
+
+### OCR (光学文字認識)
+
+- 画像からテキストを抽出（Tesseract使用）
+- 位置情報付きOCR：PDF内で検索すると正確な位置がハイライトされます
+- Evernoteの認識データがない場合に自動でOCR実行
+
+### PDF出力
+
+- 各ノートをPDFとして出力
+- 背景色・ハイライトを保持
+- OCRテキストを透明レイヤーとして埋め込み（検索可能）
+- `_PDF/` フォルダにクリーンなコピーを作成
+
+### 処理再開機能
+
+処理が中断しても、再実行すると完了済みのノート（`_PDF/` にPDFが存在するもの）は自動的にスキップされます。
 
 ## ライセンス
 
