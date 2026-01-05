@@ -65,42 +65,42 @@ logging:
 def process_enex(enex_path, config, converter, html_formatter, md_formatter=None, pdf_formatter=None):
     logging.info(f"Processing ENEX file: {enex_path}")
     
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    
     parser = NoteParser(enex_path)
     count = 0
     skipped = 0
+    errors = 0
     
     # Get output root for checking existing PDFs
     base_output_root = Path(config.get('output', {}).get('root_dir', 'Converted_Notes'))
     enex_stem = Path(enex_path).stem
     
-    for note_data in parser.parse():
+    # Number of parallel note workers (separate from OCR workers)
+    note_workers = config.get('processing', {}).get('note_workers', 2)
+    
+    def process_single_note(note_data):
+        """Process a single note. Returns (success, skipped, title)"""
+        title = note_data.get('title', 'Untitled')
+        created = note_data.get('created')
+        
+        # Check if this note is already processed (PDF exists in _PDF folder)
+        date_str = created.strftime(converter.date_format) if created else "NoDate"
+        sanitized_title = converter._sanitize_filename(title)
+        dir_name = f"{date_str}_{sanitized_title}"
+        
+        # Check for PDF in _PDF folder (with or without hash suffix)
+        pdf_base_path = base_output_root / "_PDF" / enex_stem
+        if pdf_base_path.exists():
+            matching_folders = list(pdf_base_path.glob(f"{dir_name}*"))
+            for folder in matching_folders:
+                if folder.is_dir():
+                    existing_pdfs = list(folder.glob("*.pdf"))
+                    if existing_pdfs:
+                        logging.debug(f"Skipping already processed: {title}")
+                        return (False, True, title)  # Not converted, but skipped
+        
         try:
-            title = note_data.get('title', 'Untitled')
-            created = note_data.get('created')
-            
-            # Check if this note is already processed (PDF exists in _PDF folder)
-            date_str = created.strftime(converter.date_format) if created else "NoDate"
-            sanitized_title = converter._sanitize_filename(title)
-            dir_name = f"{date_str}_{sanitized_title}"
-            
-            # Check for PDF in _PDF folder (with or without hash suffix)
-            pdf_base_path = base_output_root / "_PDF" / enex_stem
-            should_skip = False
-            if pdf_base_path.exists():
-                # Match folders with pattern: dir_name or dir_name_xxxx (hash suffix)
-                matching_folders = list(pdf_base_path.glob(f"{dir_name}*"))
-                for folder in matching_folders:
-                    if folder.is_dir():
-                        existing_pdfs = list(folder.glob("*.pdf"))
-                        if existing_pdfs:
-                            logging.debug(f"Skipping already processed: {title}")
-                            skipped += 1
-                            should_skip = True
-                            break
-            
-            if should_skip:
-                continue
-            
             target_dir, intermediate_html, title, created, full_data = converter.convert_note(note_data)
             
             # Generate HTML
@@ -115,12 +115,30 @@ def process_enex(enex_path, config, converter, html_formatter, md_formatter=None
             if pdf_formatter:
                 pdf_formatter.generate(target_dir, intermediate_html, title, full_data)
                 
-            count += 1
+            return (True, False, title)  # Converted successfully
         except Exception as e:
-            logging.error(f"Error converting note '{note_data.get('title')}': {e}", exc_info=True)
-
-    if skipped > 0:
-        logging.info(f"Finished {enex_path}: {count} notes converted, {skipped} skipped (already processed).")
+            logging.error(f"Error converting note '{title}': {e}", exc_info=True)
+            return (False, False, title)  # Error
+    
+    # Collect all notes first (needed for parallel processing)
+    notes = list(parser.parse())
+    logging.info(f"Found {len(notes)} notes in {enex_path}")
+    
+    # Process notes in parallel
+    with ThreadPoolExecutor(max_workers=note_workers) as executor:
+        futures = {executor.submit(process_single_note, note): note for note in notes}
+        
+        for future in as_completed(futures):
+            success, was_skipped, title = future.result()
+            if success:
+                count += 1
+            elif was_skipped:
+                skipped += 1
+            else:
+                errors += 1
+    
+    if skipped > 0 or errors > 0:
+        logging.info(f"Finished {enex_path}: {count} converted, {skipped} skipped, {errors} errors.")
     else:
         logging.info(f"Finished {enex_path}: {count} notes converted.")
 
