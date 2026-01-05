@@ -122,11 +122,31 @@ def main():
     target_path = args.path or config.get('input', {}).get('default_path', '.')
     recursive = args.recursive or config.get('input', {}).get('default_recursive', False)
 
+    # Determine Output directory base for logging
+    output_root_base = config.get('output', {}).get('root_dir', 'Converted_Notes')
+    
+    # Ensure base output dir exists for log file
+    try:
+        os.makedirs(output_root_base, exist_ok=True)
+    except Exception as e:
+        print(f"Warning: Could not create output directory for logging: {e}")
+
+    log_file_path = os.path.join(output_root_base, "enex2md.log")
+
     # Setup Logging
     log_level = config.get('logging', {}).get('level', 'INFO')
-    logging.basicConfig(level=getattr(logging, log_level.upper()), format='%(asctime)s - %(levelname)s - %(message)s')
+    
+    logging.basicConfig(
+        level=getattr(logging, log_level.upper()), 
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler(log_file_path, encoding='utf-8'),
+            logging.StreamHandler(sys.stdout)
+        ]
+    )
     
     logging.info(f"Starting conversion. Target: {target_path}, Recursive: {recursive}")
+    logging.info(f"Logging to file: {log_file_path}")
     
     # Check if target exists
     if not os.path.exists(target_path):
