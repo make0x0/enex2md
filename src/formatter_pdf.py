@@ -250,6 +250,29 @@ class PdfFormatter(HtmlFormatter):
                 # Add a small icon or text to indicate attachment? (Optional)
                 # a.string = f"📎 {a.string}" 
 
+        # Add PDF Metadata
+        # WeasyPrint maps <meta> tags in head to PDF Info
+        # <meta name="author" content="..."> -> Author
+        # <meta name="description" content="..."> -> Subject
+        # <meta name="keywords" content="..."> -> Keywords
+        # <meta name="generator" content="..."> -> Creator
+        # <meta name="dcterms.created" content="..."> -> CreationDate
+        # <meta name="dcterms.modified" content="..."> -> ModDate
+        
+        if not soup.head:
+            soup.insert(0, soup.new_tag("head"))
+            
+        def add_meta(name, content):
+            if content:
+                meta = soup.new_tag("meta", attrs={"name": name, "content": str(content)})
+                soup.head.append(meta)
+
+        add_meta("author", note_data.get('author', ''))
+        add_meta("dcterms.created", note_data.get('created', ''))
+        if note_data.get('updated'):
+            add_meta("dcterms.modified", note_data.get('updated'))
+        add_meta("generator", "enex2md")
+
         # Generate PDF
         html_str = str(soup)
         
@@ -259,6 +282,19 @@ class PdfFormatter(HtmlFormatter):
             presentational_hints=True
         )
         
+        # Update Filesystem Timestamp (os.utime)
+        # Use updated date if available, else created date
+        ts_date = note_data.get('updated') or note_data.get('created')
+        if ts_date:
+            try:
+                # Assuming ts_date is a datetime object (it should be from parser)
+                import time
+                ts_timestamp = ts_date.timestamp()
+                os.utime(output_path, (ts_timestamp, ts_timestamp))
+                logging.debug(f"Set PDF timestamp to {ts_date}")
+            except Exception as e:
+                logging.warning(f"Failed to set timestamp for PDF: {e}")
+
         # Copy PDF to _PDF folder (maintains directory structure)
         self._copy_to_pdf_folder(output_path, target_dir, note_data)
         

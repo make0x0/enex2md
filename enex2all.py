@@ -187,6 +187,7 @@ def main():
     parser.add_argument('-o', '--output', help="Output directory.")
     parser.add_argument('--format', help="Output format (html,markdown). Overrides config.")
     parser.add_argument('--init-config', action='store_true', help="Generate default configuration file.")
+    parser.add_argument('--skip-scan', action='store_true', help="Skip pre-scanning files for note count (fast mode).")
 
     args = parser.parse_args()
 
@@ -210,6 +211,7 @@ def main():
     # Paths
     target_path = args.path or config.get('input', {}).get('default_path', '.')
     recursive = args.recursive or config.get('input', {}).get('default_recursive', False)
+    skip_scan = args.skip_scan or config.get('processing', {}).get('skip_scan', False)
     base_output_root = config.get('output', {}).get('root_dir', 'Converted_Notes')
     
     try:
@@ -267,15 +269,19 @@ def main():
         sys.exit(0)
 
     # --- Pre-scan count ---
-    with console.status("[bold green]Scanning files to count notes...") as status:
-        total_notes = 0
-        enex_counts = {}
-        for i, ef in enumerate(enex_files, 1):
-            status.update(f"[bold green]Scanning file {i}/{len(enex_files)}: {ef.name} (Found {total_notes} notes so far)...")
-            c = count_notes_in_enex(ef)
-            enex_counts[ef] = c
-            total_notes += c
-        console.print(f"[bold]Found {len(enex_files)} files with {total_notes} total notes.[/bold]")
+    total_notes = None 
+    if not skip_scan:
+        with console.status("[bold green]Scanning files to count notes...") as status:
+            total_notes = 0
+            enex_counts = {}
+            for i, ef in enumerate(enex_files, 1):
+                status.update(f"[bold green]Scanning file {i}/{len(enex_files)}: {ef.name} (Found {total_notes} notes so far)...")
+                c = count_notes_in_enex(ef)
+                enex_counts[ef] = c
+                total_notes += c
+            console.print(f"[bold]Found {len(enex_files)} files with {total_notes} total notes.[/bold]")
+    else:
+        logging.info("Skipping pre-scan (Fast Mode). Progress bar will be indeterminate.")
 
     # Initialize formatters
     html_formatter = HtmlFormatter(config)
