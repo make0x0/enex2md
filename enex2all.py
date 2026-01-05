@@ -97,16 +97,29 @@ def process_enex(enex_path, config, converter, html_formatter, md_formatter=None
         sanitized_title = converter._sanitize_filename(title)
         dir_name = f"{date_str}_{sanitized_title}"
         
-        # Check for PDF in _PDF folder (with or without hash suffix)
+        # Check for PDF in _PDF folder (file name check with glob for potential hash suffixes or slight name changes)
+        # Note: In the new flat structure, PDFs are directly in _PDF/enex_stem/
         pdf_base_path = base_output_root / "_PDF" / enex_stem
         if pdf_base_path.exists():
-            matching_folders = list(pdf_base_path.glob(f"{dir_name}*"))
-            for folder in matching_folders:
-                if folder.is_dir():
-                    existing_pdfs = list(folder.glob("*.pdf"))
-                    if existing_pdfs:
-                        logging.debug(f"Skipping already processed: {title}")
-                        return (False, True, title)  # Not converted, but skipped
+            # sanitized_title check might be tricky if it has special chars or if sanitizer changed
+            # But we can try to match the prefix.
+            # The PDF filename is sanitize_filename(title).pdf
+            # Let's just check if a file starting with sanitied title exists.
+            
+            # Sanitizer logic is in converter.py. Let's assume it's consistent.
+            # Filename format: {sanitized_title}.pdf
+            
+            # Wait, the copy logic copies "output_path.name", which is "{sanitized_title}.pdf"
+            # It DOES NOT include the date prefix in the filename itself, only in the folder name of the FULL export.
+            # Let's verify how output_path is constructed in formatter_pdf.py line 184:
+            # output_path = target_dir / f"{self._sanitize_filename(title)}.pdf"
+            
+            pdf_filename = f"{sanitized_title}.pdf"
+            potential_pdf = pdf_base_path / pdf_filename
+            
+            if potential_pdf.exists():
+                 logging.debug(f"Skipping already processed: {title}")
+                 return (False, True, title)  # Not converted, but skipped
         
         try:
             import threading

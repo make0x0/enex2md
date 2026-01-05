@@ -208,15 +208,15 @@ class PdfFormatter(HtmlFormatter):
             enex_folder = target_dir.parent.name  # e.g., "MyNotebook"
             output_root = target_dir.parent.parent  # The base output directory
             
-            # Create _PDF folder structure
-            pdf_dest_dir = output_root / "_PDF" / enex_folder / note_folder
+            # Create _PDF folder structure (output_root / _PDF / enex_folder)
+            pdf_dest_dir = output_root / "_PDF" / enex_folder
             pdf_dest_dir.mkdir(parents=True, exist_ok=True)
             
             # Copy the PDF
-            pdf_dest_path = pdf_dest_dir / pdf_path.name
-            shutil.copy2(pdf_path, pdf_dest_path)
+            dest_path = pdf_dest_dir / pdf_path.name
+            shutil.copy2(pdf_path, dest_path)
             
-            logging.debug(f"Copied PDF to: {pdf_dest_path}")
+            logging.debug(f"Copied PDF to: {dest_path}")
         except Exception as e:
             logging.warning(f"Failed to copy PDF to _PDF folder: {e}")
 
