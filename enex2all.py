@@ -308,9 +308,12 @@ def main():
         transient=False  # Keep bar after completion
     ) as progress:
         
-        main_task = progress.add_task("[green]Total Progress", total=total_notes)
+        main_task = progress.add_task(f"[green]Total Progress (Notebook 0/{len(enex_files)})", total=total_notes)
         
-        for enex_file in enex_files:
+        for i, enex_file in enumerate(enex_files, 1):
+            # Update description with current file index
+            progress.update(main_task, description=f"[green]Total Progress (Notebook {i}/{len(enex_files)})")
+            
             # Create a subfolder for this ENEX file
             enex_stem = Path(enex_file).stem
             output_root_for_enex = Path(base_output_root) / enex_stem
