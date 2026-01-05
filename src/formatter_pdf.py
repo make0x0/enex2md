@@ -137,6 +137,35 @@ class PdfFormatter(HtmlFormatter):
         elif soup.body:
             soup.body.insert(0, pdf_style)
 
+        # Fit Width Mode (Aggressive CSS)
+        if self.config.get('pdf', {}).get('fit_mode', False):
+            logging.info(f"PDF Fit Width Mode: Enabled for '{title}'")
+            fit_style = soup.new_tag('style')
+            fit_style.string = """
+                table, pre, code, img, figure, blockquote {
+                    max-width: 100% !important;
+                    width: 100% !important;
+                    box-sizing: border-box !important;
+                    white-space: pre-wrap !important; /* Force wrapping for pre */
+                    word-wrap: break-word !important; /* Break long words */
+                    overflow-wrap: break-word !important;
+                    table-layout: fixed !important; /* Force table to respect width */
+                }
+                /* Ensure images don't stretch if they are small */
+                img {
+                    width: auto !important; 
+                    max-width: 100% !important;
+                }
+                /* But if we really want to fit wide tables, we might need smaller font */
+                table {
+                    font-size: 80%; 
+                }
+            """
+            if soup.head:
+                soup.head.append(fit_style)
+            elif soup.body:
+                soup.body.insert(0, fit_style)
+
         # Insert Content
         content_div = soup.find('div', class_='note-content')
         if not content_div:

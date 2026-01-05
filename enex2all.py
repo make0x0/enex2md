@@ -188,6 +188,7 @@ def main():
     parser.add_argument('--format', help="Output format (html,markdown). Overrides config.")
     parser.add_argument('--init-config', action='store_true', help="Generate default configuration file.")
     parser.add_argument('--skip-scan', action='store_true', help="Skip pre-scanning files for note count (fast mode).")
+    parser.add_argument('--pdf-fit-mode', action='store_true', help="Force content to fit within PDF page width (breaks tables/pre).")
 
     args = parser.parse_args()
 
@@ -212,6 +213,11 @@ def main():
     target_path = args.path or config.get('input', {}).get('default_path', '.')
     recursive = args.recursive or config.get('input', {}).get('default_recursive', False)
     skip_scan = args.skip_scan or config.get('processing', {}).get('skip_scan', False)
+    
+    if args.pdf_fit_mode:
+        if 'pdf' not in config: config['pdf'] = {}
+        config['pdf']['fit_mode'] = True
+
     base_output_root = config.get('output', {}).get('root_dir', 'Converted_Notes')
     
     try:
