@@ -178,7 +178,7 @@ class PdfFormatter(HtmlFormatter):
                          output_path = target_dir / f"{self._sanitize_filename(title)}.pdf"
                          shutil.copy2(original_pdf, output_path)
                          logging.info(f"Smart PDF Mode: Copied original PDF for '{title}'")
-                         self._copy_to_pdf_folder(output_path, target_dir)
+                         self._copy_to_pdf_folder(output_path, target_dir, note_data)
                          return output_path
                 
             # Match logic from HtmlFormatter but apply PDF-specific visibility
@@ -226,16 +226,16 @@ class PdfFormatter(HtmlFormatter):
         )
         
         # Copy PDF to _PDF folder (maintains directory structure)
-        self._copy_to_pdf_folder(output_path, target_dir)
+        self._copy_to_pdf_folder(output_path, target_dir, note_data)
         
         return output_path
     
-    def _copy_to_pdf_folder(self, pdf_path, target_dir):
+    def _copy_to_pdf_folder(self, pdf_path, target_dir, note_data=None):
         """Copy the generated PDF to a _PDF folder, maintaining hierarchy."""
         try:
             # Get the output root (parent of enex folder, which is parent of note folder)
             # Structure: output_root / enex_stem / note_folder / file.pdf
-            # We want: output_root / _PDF / enex_stem / note_folder / file.pdf
+            # We want: output_root / _PDF / enex_stem / file.pdf (Flattened)
             
             note_folder = target_dir.name  # e.g., "2025-01-01_MyNote"
             enex_folder = target_dir.parent.name  # e.g., "MyNotebook"
@@ -245,8 +245,21 @@ class PdfFormatter(HtmlFormatter):
             pdf_dest_dir = output_root / "_PDF" / enex_folder
             pdf_dest_dir.mkdir(parents=True, exist_ok=True)
             
+            # Prefix filename with date if available
+            filename = pdf_path.name
+            if note_data:
+                created = note_data.get('created')
+                # created is usually "YYYY-MM-DD HH:MM:SS" or similar
+                # We want "YYYY-MM-DD_" prefix
+                if created:
+                    date_part = str(created).split(' ')[0]
+                    # Check if filename already starts with this date to avoid double prefix 
+                    # (though sanitize usually uses date_title folder name, pdf filename is usually just Title)
+                    if not filename.startswith(date_part):
+                        filename = f"{date_part}_{filename}"
+
             # Copy the PDF
-            dest_path = pdf_dest_dir / pdf_path.name
+            dest_path = pdf_dest_dir / filename
             shutil.copy2(pdf_path, dest_path)
             
             logging.debug(f"Copied PDF to: {dest_path}")

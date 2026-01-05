@@ -98,7 +98,7 @@ Converted_Notes/
   │   └── ...
   └── _PDF/                         # PDFのみのクリーンフォルダ
       └── MyNotes/
-          └── 会議議事録.pdf
+          └── 2023-01-01_会議議事録.pdf
 ```
 
 ## 設定オプション (config.yaml)

@@ -107,17 +107,18 @@ def process_enex(enex_path, config, converter, html_formatter, md_formatter=None
             # Let's just check if a file starting with sanitied title exists.
             
             # Sanitizer logic is in converter.py. Let's assume it's consistent.
-            # Filename format: {sanitized_title}.pdf
-            
-            # Wait, the copy logic copies "output_path.name", which is "{sanitized_title}.pdf"
-            # It DOES NOT include the date prefix in the filename itself, only in the folder name of the FULL export.
-            # Let's verify how output_path is constructed in formatter_pdf.py line 184:
-            # output_path = target_dir / f"{self._sanitize_filename(title)}.pdf"
+            # Filename format could be:
+            # 1. {sanitized_title}.pdf (Old)
+            # 2. {date}_{sanitized_title}.pdf (New)
             
             pdf_filename = f"{sanitized_title}.pdf"
             potential_pdf = pdf_base_path / pdf_filename
             
-            if potential_pdf.exists():
+            # Check for date-prefixed file
+            prefixed_pdf_filename = f"{date_str}_{sanitized_title}.pdf"
+            potential_prefixed_pdf = pdf_base_path / prefixed_pdf_filename
+            
+            if potential_pdf.exists() or potential_prefixed_pdf.exists():
                  logging.debug(f"Skipping already processed: {title}")
                  return (False, True, title)  # Not converted, but skipped
         
