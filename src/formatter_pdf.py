@@ -183,7 +183,8 @@ class PdfFormatter(HtmlFormatter):
                          output_path = target_dir / f"{self._sanitize_filename(title)}.pdf"
                          shutil.copy2(original_pdf, output_path)
                          logging.info(f"Smart PDF Mode: Copied original PDF for '{title}'")
-                         self._copy_to_pdf_folder(output_path, target_dir, note_data)
+                         # Pass the original PDF filename to exclude it from attachments
+                         self._copy_to_pdf_folder(output_path, target_dir, note_data, exclude_filenames={original_pdf.name})
                          return output_path
                 
             # Match logic from HtmlFormatter but apply PDF-specific visibility
@@ -263,7 +264,7 @@ class PdfFormatter(HtmlFormatter):
         
         return output_path
     
-    def _copy_to_pdf_folder(self, pdf_path, target_dir, note_data=None):
+    def _copy_to_pdf_folder(self, pdf_path, target_dir, note_data=None, exclude_filenames=None):
         """Copy the generated PDF to a _PDF folder, maintaining hierarchy."""
         try:
             # Get the output root (parent of enex folder, which is parent of note folder)
@@ -316,23 +317,31 @@ class PdfFormatter(HtmlFormatter):
                 dest_attachments_dir = pdf_dest_dir / attachment_folder_name
                 
                 # Check if we should copy
-                # If the PDF has NO attachments, we might create an empty folder?
-                # Ideally we only do this if there are actual attachments.
-                # Let's iterate and see if there are non-image files.
-                has_attachments = False
-                for f in source_attachments_dir.iterdir():
-                    if f.is_file():
-                        # Simple check: images are usually embedded, everything else is link.
-                        # But user might have linked images too.
-                        # Copying everything is the robust choice.
-                        has_attachments = True
-                        break
+                # Filter out images, XML, JSON, and hidden files
+                excluded_extensions = {
+                    '.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tiff',
+                    '.xml', '.json'
+                }
                 
-                if has_attachments:
+                valid_attachments = []
+                valid_attachments = []
+                for f in source_attachments_dir.iterdir():
+                    if f.is_file() and not f.name.startswith('.'):
+                        if f.suffix.lower() not in excluded_extensions:
+                            # Also check explicit exclusion (e.g. main PDF)
+                            if exclude_filenames and f.name in exclude_filenames:
+                                continue
+                            valid_attachments.append(f)
+                
+                if valid_attachments:
                     if dest_attachments_dir.exists():
                         shutil.rmtree(dest_attachments_dir)
-                    shutil.copytree(source_attachments_dir, dest_attachments_dir)
-                    logging.info(f"Copied attachments to: {dest_attachments_dir}")
+                    dest_attachments_dir.mkdir(parents=True, exist_ok=True)
+                    
+                    for f in valid_attachments:
+                        shutil.copy2(f, dest_attachments_dir / f.name)
+                        
+                    logging.info(f"Copied {len(valid_attachments)} attachments to: {dest_attachments_dir}")
 
         except Exception as e:
             logging.warning(f"Failed to copy PDF to _PDF folder: {e}")
