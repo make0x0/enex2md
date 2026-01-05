@@ -117,6 +117,8 @@ class NoteConverter:
                 
                 recognition = res.get('recognition')
                 ocr_performed = False
+                ocr_position_data = None  # New: Store position data for OCR
+                image_dimensions = None   # New: Store image size for positioning
                 
                 ocr_enabled = self.config.get('ocr', {}).get('enabled', False)
                 if not recognition and ocr_enabled and is_image:
@@ -124,23 +126,46 @@ class NoteConverter:
                          import pytesseract
                          from PIL import Image
                          import io
+                         import json
                          
                          lang = self.config.get('ocr', {}).get('language', 'jpn')
                          image = Image.open(io.BytesIO(data))
+                         image_dimensions = {'width': image.width, 'height': image.height}
                          
-                         # Perform OCR
-                         text = pytesseract.image_to_string(image, lang=lang)
-                         if text.strip():
-                             # Wrap in fake XML structure to match existing logic
-                             # Or better, just store clean text and handle in formatter?
-                             # For compatibility with formatter_html which expects XML parsing:
-                             # <recoIndex><item><t>TEXT</t></item></recoIndex>
-                             # We escape special chars for basic safety
+                         # Perform OCR with position data
+                         # image_to_data returns dict with: text, left, top, width, height, conf
+                         ocr_data = pytesseract.image_to_data(image, lang=lang, output_type=pytesseract.Output.DICT)
+                         
+                         # Build position-aware text data
+                         words_with_positions = []
+                         for i in range(len(ocr_data['text'])):
+                             text = ocr_data['text'][i].strip()
+                             conf = ocr_data['conf'][i]
+                             if text and conf > 0:  # Filter empty and low-confidence
+                                 words_with_positions.append({
+                                     'text': text,
+                                     'left': ocr_data['left'][i],
+                                     'top': ocr_data['top'][i],
+                                     'width': ocr_data['width'][i],
+                                     'height': ocr_data['height'][i],
+                                     'conf': conf
+                                 })
+                         
+                         if words_with_positions:
+                             # Store as JSON for position-aware rendering
+                             ocr_position_data = {
+                                 'image_width': image.width,
+                                 'image_height': image.height,
+                                 'words': words_with_positions
+                             }
+                             
+                             # Also generate plain text for backwards compatibility
+                             plain_text = ' '.join([w['text'] for w in words_with_positions])
                              import xml.sax.saxutils
-                             safe_text = xml.sax.saxutils.escape(text)
+                             safe_text = xml.sax.saxutils.escape(plain_text)
                              recognition = f"<recoIndex><item><t>{safe_text}</t></item></recoIndex>"
                              ocr_performed = True
-                             logging.info(f"   - OCR Performed on '{filename}'")
+                             logging.info(f"   - OCR Performed on '{filename}' ({len(words_with_positions)} words)")
                      except Exception as e:
                          logging.warning(f"   - OCR Failed for '{filename}': {e}")
 
@@ -155,12 +180,20 @@ class NoteConverter:
                 else:
                     logging.info(f"   - Resource '{filename}': No recognition data.")
                 
+                # Save position data JSON if available
+                if ocr_position_data:
+                    pos_path = file_path.with_suffix(file_path.suffix + ".ocr.json")
+                    import json
+                    with open(pos_path, 'w', encoding='utf-8') as f:
+                        json.dump(ocr_position_data, f, ensure_ascii=False)
+                
                 # Store full info in map
                 res_info = {
                     'filename': filename,
                     'data_b64': res['data_b64'], 
                     'mime': mime,
-                    'recognition': recognition 
+                    'recognition': recognition,
+                    'ocr_position_data': ocr_position_data  # New: Include position data
                 }
                 res_map[md5_hash] = res_info
                 

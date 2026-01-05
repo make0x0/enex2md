@@ -212,27 +212,68 @@ class PdfFormatter(HtmlFormatter):
                 if res.get('data_b64') and res.get('mime'):
                     img['src'] = f"data:{res['mime']};base64,{res['data_b64']}"
                 
-                # Inject OCR Text
-                recognition_xml = res.get('recognition')
-                if recognition_xml:
+                # Inject OCR Text with position awareness
+                ocr_position_data = res.get('ocr_position_data')
+                
+                if ocr_position_data and ocr_position_data.get('words'):
+                    # Position-aware OCR: Place each word at its exact location
+                    img_width = ocr_position_data['image_width']
+                    img_height = ocr_position_data['image_height']
+                    words = ocr_position_data['words']
+                    
+                    # Wrap image in a relative container
+                    wrapper = soup.new_tag('div', style="position:relative; display:inline-block;")
+                    img.wrap(wrapper)
+                    
+                    # Create a text overlay container sized to match image
+                    text_layer = soup.new_tag('div', style=f"""
+                        position: absolute;
+                        top: 0;
+                        left: 0;
+                        width: 100%;
+                        height: 100%;
+                        z-index: 10;
+                        pointer-events: none;
+                    """)
+                    
+                    # Add each word as a positioned span
+                    for word_info in words:
+                        # Calculate position as percentage of image size
+                        left_pct = (word_info['left'] / img_width) * 100
+                        top_pct = (word_info['top'] / img_height) * 100
+                        width_pct = (word_info['width'] / img_width) * 100
+                        height_pct = (word_info['height'] / img_height) * 100
+                        
+                        # Estimate font size in pt based on word height
+                        # Assume image roughly fits on A4 page (~800px typical image height = ~500pt page height)
+                        # So we scale: word_height_px * (500pt / img_height_px) * 0.8 (factor for line-height)
+                        font_size_pt = max(4, min(word_info['height'] * 0.6, 48))  # Clamp between 4pt and 48pt
+                        
+                        word_span = soup.new_tag('span', style=f"""
+                            position: absolute;
+                            left: {left_pct:.2f}%;
+                            top: {top_pct:.2f}%;
+                            width: {width_pct:.2f}%;
+                            height: {height_pct:.2f}%;
+                            color: rgba(0,0,0,0);
+                            font-size: {font_size_pt:.1f}pt;
+                            line-height: 1;
+                            white-space: nowrap;
+                            overflow: hidden;
+                        """)
+                        word_span.string = word_info['text']
+                        text_layer.append(word_span)
+                    
+                    wrapper.append(text_layer)
+                    logging.debug(f"Positioned {len(words)} OCR words for '{filename}'")
+                    
+                elif res.get('recognition'):
+                    # Fallback: Use old method for non-positioned OCR (e.g., Evernote native)
+                    recognition_xml = res.get('recognition')
                     text_content = self._extract_text_from_reco(recognition_xml)
                     if text_content:
-                        # Improved Searchability for PDF:
-                        # Wrap image and text in a relative container.
-                        # Text overlays the image with transparent color.
-                        
                         wrapper = soup.new_tag('div', style="position:relative; display:inline-block;")
                         img.wrap(wrapper)
-                        
-                        # WeasyPrint specifics:
-                        # color: transparent works better than opacity:0 for selection in some viewers.
-                        # font-size: 10pt (readable size)
-                        # z-index: 2 (on top of image)
-                        # pointer-events: none (to click through to image if needed, though PDF doesn't support this much)
-                        
-                        # NOTE: WeasyPrint might not respect 'transparent' color correctly or Mac Preview might ignore it.
-                        # Alternative: 'fill: transparent' if it were SVG?
-                        # Another trick: color: rgba(0,0,0,0);
                         
                         new_div = soup.new_tag('div', style="""
                             position: absolute; 
