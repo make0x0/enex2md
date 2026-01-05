@@ -4,7 +4,9 @@ import os
 import yaml
 import logging
 import shutil
+import json
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 
 # Suppress noisy third-party loggers BEFORE they are imported
 for logger_name in ['weasyprint', 'fontTools', 'fontTools.subset', 'fontTools.ttLib', 'fontTools.ttLib.ttFont']:
@@ -102,7 +104,7 @@ def count_notes_in_enex(enex_path):
         logging.warning(f"Failed to count notes in {enex_path}: {e}")
     return count
 
-def process_enex(enex_path, config, converter, html_formatter, md_formatter, pdf_formatter, progress=None, task_id=None):
+def process_enex(enex_path, config, converter, html_formatter, md_formatter, pdf_formatter, progress=None, task_id=None, args=None):
     logging.info(f"Processing ENEX file: {enex_path}")
     
     from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -159,24 +161,120 @@ def process_enex(enex_path, config, converter, html_formatter, md_formatter, pdf
             return (False, False, title)
 
     # Collect notes
-    notes = list(parser.parse())
-    # logging.info(f"Found {len(notes)} notes in {enex_path}") # Duplicate with progress bar info
+    all_notes = list(parser.parse())
+    notes_to_process = []
     
+    # --- Retry Filter Logic ---
+    retry_list = None
+    if getattr(args, 'retry_run', None):
+        try:
+            with open(args.retry_run, 'r', encoding='utf-8') as f:
+                retry_list = set(json.load(f)) # Set of titles
+            logging.info(f"Retry Run: Loaded {len(retry_list)} failed notes from {args.retry_run}")
+        except Exception as e:
+            logging.error(f"Failed to load retry file: {e}")
+            return
+
+    for note in all_notes:
+        title = note.get('title', 'Untitled')
+        if retry_list is not None:
+             if title not in retry_list:
+                 skipped += 1 # Count as skipped for progress
+                 continue
+        notes_to_process.append(note)
+    
+    # --- Processing ---
+    failed_notes_log = []
+    timeout_sec = getattr(args, 'timeout', 120) if args else 120
+    
+    from concurrent.futures import wait, FIRST_COMPLETED
+    import time
+
     with ThreadPoolExecutor(max_workers=note_workers) as executor:
-        futures = {executor.submit(process_single_note, note): note for note in notes}
+        futures = {executor.submit(process_single_note, note): note for note in notes_to_process}
+        pending = set(futures.keys())
         
-        for future in as_completed(futures):
-            success, was_skipped, title = future.result()
-            if success:
-                count += 1
-            elif was_skipped:
-                skipped += 1
-            else:
-                errors += 1
+        # Track start times for each future
+        start_times = {f: time.time() for f in futures}
+        
+        while pending:
+            # Wait for any future to complete, with a short timeout for responsiveness
+            check_interval = 5  # Check every 5 seconds
+            done, pending = wait(pending, timeout=check_interval, return_when=FIRST_COMPLETED)
             
-            # Update Progress
-            if progress and task_id is not None:
-                progress.advance(task_id)
+            # Process completed futures
+            for future in done:
+                note_ref = futures[future]
+                note_title = note_ref.get('title', 'Untitled')
+                
+                try:
+                    success, was_skipped, title = future.result(timeout=0)  # Already done, no wait
+                    
+                    if success:
+                        count += 1
+                    elif was_skipped:
+                        skipped += 1
+                    else:
+                        errors += 1
+                        failed_notes_log.append(title)
+                except Exception as e:
+                    logging.error(f"Exception processing note '{note_title}': {e}")
+                    errors += 1
+                    failed_notes_log.append(note_title)
+                
+                # Update Progress
+                if progress and task_id is not None:
+                    progress.advance(task_id)
+            
+            # Check for timed-out futures in pending set
+            now = time.time()
+            timed_out_futures = []
+            for future in list(pending):
+                elapsed = now - start_times[future]
+                if elapsed > timeout_sec:
+                    note_ref = futures[future]
+                    note_title = note_ref.get('title', 'Untitled')
+                    logging.error(f"TIMEOUT: '{note_title}' exceeded {timeout_sec}s (elapsed: {int(elapsed)}s). Skipping.")
+                    errors += 1
+                    failed_notes_log.append(note_title)
+                    timed_out_futures.append(future)
+                    
+                    # Update Progress (count as processed)
+                    if progress and task_id is not None:
+                        progress.advance(task_id)
+            
+            # Remove timed-out futures from pending (don't wait for them anymore)
+            for future in timed_out_futures:
+                pending.discard(future)
+                # Note: The thread itself may still be running, but we move on
+            
+            # Show countdown for pending notes
+            if pending:
+                oldest_pending_time = min(now - start_times[f] for f in pending)
+                remaining = max(0, timeout_sec - int(oldest_pending_time))
+                logging.info(f"[Status] {len(pending)} notes pending. Oldest running: {int(oldest_pending_time)}s / {timeout_sec}s (timeout in ~{remaining}s)")
+
+    # Write Fail Log
+    if failed_notes_log:
+        try:
+            # Write to output directory so it's accessible outside Docker
+            output_root = config.get('output', {}).get('root_dir', '/output')
+            fail_log_path = os.path.join(output_root, args.fail_log if args else 'failed_notes.json')
+            
+            # Append to existing if retrying
+            existing_failures = []
+            if os.path.exists(fail_log_path):
+                with open(fail_log_path, 'r', encoding='utf-8') as f:
+                    try: existing_failures = json.load(f)
+                    except: pass
+            
+            combined = list(set(existing_failures + failed_notes_log))
+            
+            with open(fail_log_path, 'w', encoding='utf-8') as f:
+                json.dump(combined, f, ensure_ascii=False, indent=2)
+            logging.info(f"Recorded {len(failed_notes_log)} failures to {fail_log_path}")
+        except Exception as e:
+            logging.error(f"Failed to write fail logs: {e}")
 
     logging.info(f"Finished {enex_path}: {count} converted, {skipped} skipped, {errors} errors.")
 
@@ -189,6 +287,9 @@ def main():
     parser.add_argument('--init-config', action='store_true', help="Generate default configuration file.")
     parser.add_argument('--skip-scan', action='store_true', help="Skip pre-scanning files for note count (fast mode).")
     parser.add_argument('--pdf-fit-mode', action='store_true', help="Force content to fit within PDF page width (breaks tables/pre).")
+    parser.add_argument('--retry-run', help="JSON file containing list of note titles to retry.")
+    parser.add_argument('--fail-log', default="failed_notes.json", help="Output JSON file for failed/skipped notes.")
+    parser.add_argument('--timeout', type=int, default=120, help="Timeout in seconds for processing a single note.")
 
     args = parser.parse_args()
 
@@ -328,7 +429,7 @@ def main():
             
             # Pass progress and task to process_enex
             # Note: process_enex logic is now simplified above
-            process_enex(enex_file, config, converter, html_formatter, md_formatter, pdf_formatter, progress, main_task)
+            process_enex(enex_file, config, converter, html_formatter, md_formatter, pdf_formatter, progress, main_task, args)
 
 if __name__ == "__main__":
     main()
