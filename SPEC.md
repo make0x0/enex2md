@@ -18,6 +18,9 @@ Evernoteからエクスポートされた `.enex` ファイルを読み込み、
     - **CLI引数解析**: `argparse`
     - **パス操作**: `pathlib`, `glob`, `os.path`
     - **その他**: `base64`, `hashlib`, `mimetypes`, `logging`
+    - **暗号化対応**:
+        - HTML出力時、暗号化箇所をブラウザで復号するためのJavaScriptライブラリ (`crypto-js`) を利用する。
+        - 外部CDNには依存せず、成果物ディレクトリにライブラリのファイルを自動コピーする。
 
 ## 3. 入出力定義
 
@@ -29,6 +32,8 @@ Evernoteからエクスポートされた `.enex` ファイルを読み込み、
 - **再帰オプション**: `-r` / `--recursive`
 - **出力先指定**: `-o` / `--output`
 - **フォーマット指定（オプション）**: `--format html,markdown` (設定ファイルを上書き)
+- **設定ファイルひな形生成**: `--init-config`
+    - 現在のディレクトリにデフォルトの `config.yaml` を生成して終了する。
 
 ### 3.2 出力構造
 
@@ -115,6 +120,13 @@ Title, Created Date, Updated Date, Tags, Author, Source URL 等を取得。
 - 画像 (`type="image/..."`): `<img src="./image.png" alt="image.png">`
 - その他: `<a href="./doc.pdf">doc.pdf</a>`
 - Evernote固有タグ (`<en-todo checked="true"/>` 等) を `<input type="checkbox" checked>` 等に置換。
+- **暗号化タグ (`<en-crypt>`) の処理**:
+    - `<en-crypt hint="...">BASE64_CIPHERTEXT</en-crypt>` を検出。
+    - **HTMLの場合**:
+        - 復号用のUI（パスワード入力フィールドと解除ボタン）を持つカスタム要素または `div` に置換する。
+        - データ属性 `data-cipher` に暗号化テキストを、`data-hint` にヒント情報を格納する。
+    - **Markdownの場合**:
+        - 復号は困難なため、`**[Encrypted Content]**` などのプレースホルダーに置換し、原文（Base64）をコードブロック等で残すか、設定により警告を出す。
 
 **HTML出力処理** (`output.formats` に `"html"` が含まれる場合):
 1. 中間HTMLをテンプレートに埋め込む。
@@ -158,10 +170,17 @@ HTMLとMarkdownそれぞれの成功/失敗をログに記録する。
 
 - **Pythonスクリプト**: `enex2all.py`
 - **requirements.txt**: `markdownify` を追加。
-- **Docker環境**: 変更なし（Pythonイメージにライブラリ追加のみ）。
+- **Docker環境**:
+    - `docker-compose.yml` を提供。
+    - ローカルのカレントディレクトリをマウントし、生成された `config.yaml` をユーザーが編集してコンテナから読み込めるように構成する。
+
 - **README.md**:
     - Markdown出力の設定方法を追記。
     - Front Matterの活用方法（Obsidian等での利用）に言及。
+    - **運用フローの記載**:
+        1. コンフィグ生成: `docker compose run --rm app --init-config`
+        2. 設定編集: ローカルに出力された `config.yaml` を編集。
+        3. 変換実行: `docker compose run --rm app ...`
 
 ## 9. 参考情報: ENML to Markdown 変換の注意点
 実装者向けの技術的留意事項。
@@ -176,3 +195,11 @@ Evernoteのノートにはテーブルが頻出する。Markdownのテーブル�
 
 ### 9.3 画像リンクの整合性
 Markdownファイル（`content.md`）と画像ファイルは同じフォルダに配置されるため、リンクパスは相対パス `./image.png` または単に `image.png` となる。これにより、フォルダごと移動してもリンク切れしなくなる。
+
+### 9.4 暗号化 (`<en-crypt>`) の技術詳細
+- **アルゴリズム**: Evernoteは歴史的に `RC2` (64-bit key) または `AES` (128-bit key) を使用している。
+- **ヒント属性**: `<en-crypt hint="...">` に指定されたヒントから、ユーザーがパスワードを思い出す手がかりを表示する。
+- **復号実装 (HTML)**:
+    - [CryptoJS](https://github.com/brix/crypto-js) などのライブラリを使用する。
+    - PBKDF2 でパスワードからキーとIVを生成し、復号を試みるロジックを `decrypt_note.js` として生成・同梱する。
+    - 外部ネットワーク接続不要で動作させるため、ライブラリ本体も `lib/` フォルダなどに配置する。
