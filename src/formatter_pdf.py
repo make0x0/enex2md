@@ -139,35 +139,36 @@ class PdfFormatter(HtmlFormatter):
 
         # Fit Width Mode (Aggressive CSS)
         if self.config.get('pdf', {}).get('fit_mode', False):
-            logging.info(f"PDF Fit Width Mode: Enabled for '{title}'")
+            logging.info(f"PDF Fit Width Mode: Enabled for '{title}' (Using Hybrid Scale Strategy)")
             fit_style = soup.new_tag('style')
             fit_style.string = """
-                /* Safer Fit Width Mode */
+                /* Hybrid Scale Strategy for Fit Width */
+                @page {
+                    margin: 5mm;
+                }
                 
-                /* Constrain Max Width but DON'T Force Width */
+                /* Keep main body normal scale for text/images */
+                body {
+                    width: 100%;
+                }
+                
+                /* Shrink WIDE content (tables, pre) specifically */
+                table, pre, code {
+                    zoom: 0.65; /* Shrink to 65% */
+                    width: 153%; /* 100/0.65 ~ 153% to fill available space */
+                    max-width: 153%;
+                }
+                
+                /* Ensure images fit page but aren't shrunk if small */
                 img, figure, video, canvas {
                     max-width: 100% !important;
                     height: auto !important;
-                    box-sizing: border-box !important;
+                    /* Don't zoom images, let them naturally fit max-width */
                 }
                 
-                /* Wrap text to prevent overflow, but be careful with pre */
-                body {
-                    overflow-wrap: break-word !important; 
-                    word-wrap: break-word !important;
-                }
-                
-                /* Pre/Code: Force wrap to prevent horizontal scroll need */
-                pre, code {
-                    white-space: pre-wrap !important; 
-                    max-width: 100% !important;
-                }
-                
-                /* Table: Allow shrink if possible, but don't break layout */
-                table {
-                    max-width: 100% !important;
-                    /* table-layout: fixed; <--- REMOVED: Destroys layout tables */
-                    /* width: 100%; <--- REMOVED: Forces expansion to page width */
+                /* Fix table cells */
+                td, th {
+                    word-wrap: break-word;
                 }
             """
             if soup.head:
