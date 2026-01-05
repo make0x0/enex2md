@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 from bs4 import BeautifulSoup
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Placeholder for formatters
 # from src.formatter_html import HtmlFormatter
@@ -18,6 +19,8 @@ class NoteConverter:
         self.date_format = config.get('output', {}).get('date_format', '%Y-%m-%d')
         self.sanitize_char = config.get('output', {}).get('filename_sanitize_char', '_')
         self.formats = config.get('output', {}).get('formats', ['html'])
+        # Parallelization settings
+        self.ocr_workers = config.get('ocr', {}).get('workers', 4)
 
     def convert_note(self, note_data):
         title = note_data['title'] or "Untitled"
@@ -40,11 +43,9 @@ class NoteConverter:
         contents_dir = target_dir / "note_contents"
         contents_dir.mkdir(exist_ok=True)
 
-        # Process Resources
-        # Pass contents_dir instead
-        # Process resources
+        # Process Resources (with parallel OCR)
         seen_filenames = {}
-        resource_map = self._process_resources(note_data.get('resources', []), contents_dir, seen_filenames)
+        resource_map = self._process_resources_parallel(note_data.get('resources', []), contents_dir, seen_filenames)
         
         # CRITICAL: Update note_data with processed resources (includes OCR data)
         # This ensures formatters receive the processed resources with recognition/OCR text
@@ -66,6 +67,155 @@ class NoteConverter:
     def _sanitize_filename(self, name):
         """Sanitize string to be safe for filenames."""
         return re.sub(r'[<>:"/\\|?*]', self.sanitize_char, name).strip()
+
+    def _process_resources_parallel(self, resources, target_dir, seen_filenames):
+        """Process resources with parallel OCR."""
+        res_map = {}
+        
+        # First pass: Save files and prepare for OCR (sequential for filename collision handling)
+        ocr_tasks = []
+        for res in resources:
+            if not res.get('data_b64'):
+                continue
+            
+            try:
+                data = base64.b64decode(res['data_b64'])
+                md5_hash = hashlib.md5(data).hexdigest()
+                
+                # Determine filename
+                filename = res.get('filename')
+                if not filename:
+                    ext = mimetypes.guess_extension(res.get('mime', '')) or '.bin'
+                    filename = f"{md5_hash}{ext}"
+                
+                filename = self._sanitize_filename(filename)
+                
+                # Handle filename collision
+                original_filename = filename
+                counter = 1
+                name_part, ext_part = os.path.splitext(filename)
+                while filename in seen_filenames:
+                    filename = f"{name_part}_{counter}{ext_part}"
+                    counter += 1
+                seen_filenames[filename] = True
+                
+                if filename != original_filename:
+                    logging.debug(f"   - Renamed '{original_filename}' to '{filename}' to avoid collision")
+                
+                mime = res.get('mime', '')
+                is_image = mime.startswith('image/')
+                
+                # Save file
+                file_path = target_dir / filename
+                with open(file_path, 'wb') as f:
+                    f.write(data)
+                
+                # Prepare for potential OCR
+                recognition = res.get('recognition')
+                ocr_enabled = self.config.get('ocr', {}).get('enabled', False)
+                
+                # Store base info
+                res_info = {
+                    'filename': filename,
+                    'data_b64': res['data_b64'],
+                    'mime': mime,
+                    'recognition': recognition,
+                    'ocr_position_data': None,
+                    'file_path': file_path
+                }
+                res_map[md5_hash] = res_info
+                
+                # Queue for OCR if needed
+                if not recognition and ocr_enabled and is_image:
+                    ocr_tasks.append((md5_hash, data, filename, file_path))
+                elif recognition:
+                    # Save existing recognition data
+                    reco_path = file_path.with_suffix(file_path.suffix + ".xml")
+                    with open(reco_path, 'w', encoding='utf-8') as f:
+                        f.write(recognition)
+                    logging.info(f"   - Resource '{filename}': Recognition data saved.")
+                else:
+                    logging.info(f"   - Resource '{filename}': No recognition data.")
+                    
+            except Exception as e:
+                logging.error(f"Error processing resource: {e}")
+        
+        # Second pass: Parallel OCR processing
+        if ocr_tasks:
+            logging.info(f"   - Running OCR on {len(ocr_tasks)} images with {self.ocr_workers} workers...")
+            with ThreadPoolExecutor(max_workers=self.ocr_workers) as executor:
+                futures = {
+                    executor.submit(self._perform_ocr, data, filename, file_path): (md5_hash, filename)
+                    for md5_hash, data, filename, file_path in ocr_tasks
+                }
+                
+                for future in as_completed(futures):
+                    md5_hash, filename = futures[future]
+                    try:
+                        recognition, ocr_position_data = future.result()
+                        res_map[md5_hash]['recognition'] = recognition
+                        res_map[md5_hash]['ocr_position_data'] = ocr_position_data
+                    except Exception as e:
+                        logging.warning(f"   - OCR Failed for '{filename}': {e}")
+        
+        return res_map
+    
+    def _perform_ocr(self, data, filename, file_path):
+        """Perform OCR on a single image. Returns (recognition_xml, position_data)."""
+        import pytesseract
+        from PIL import Image
+        import io
+        import json
+        import xml.sax.saxutils
+        
+        lang = self.config.get('ocr', {}).get('language', 'jpn')
+        image = Image.open(io.BytesIO(data))
+        
+        # Perform OCR with position data
+        ocr_data = pytesseract.image_to_data(image, lang=lang, output_type=pytesseract.Output.DICT)
+        
+        # Build position-aware text data
+        words_with_positions = []
+        for i in range(len(ocr_data['text'])):
+            text = ocr_data['text'][i].strip()
+            conf = ocr_data['conf'][i]
+            if text and conf > 0:
+                words_with_positions.append({
+                    'text': text,
+                    'left': ocr_data['left'][i],
+                    'top': ocr_data['top'][i],
+                    'width': ocr_data['width'][i],
+                    'height': ocr_data['height'][i],
+                    'conf': conf
+                })
+        
+        recognition = None
+        ocr_position_data = None
+        
+        if words_with_positions:
+            ocr_position_data = {
+                'image_width': image.width,
+                'image_height': image.height,
+                'words': words_with_positions
+            }
+            
+            # Generate plain text for backwards compatibility
+            plain_text = ' '.join([w['text'] for w in words_with_positions])
+            safe_text = xml.sax.saxutils.escape(plain_text)
+            recognition = f"<recoIndex><item><t>{safe_text}</t></item></recoIndex>"
+            
+            # Save files
+            reco_path = file_path.with_suffix(file_path.suffix + ".xml")
+            with open(reco_path, 'w', encoding='utf-8') as f:
+                f.write(recognition)
+            
+            pos_path = file_path.with_suffix(file_path.suffix + ".ocr.json")
+            with open(pos_path, 'w', encoding='utf-8') as f:
+                json.dump(ocr_position_data, f, ensure_ascii=False)
+            
+            logging.info(f"   - OCR Performed on '{filename}' ({len(words_with_positions)} words)")
+        
+        return recognition, ocr_position_data
 
     def _process_resources(self, resources, target_dir, seen_filenames):
         """Decodes and saves resources. Returns a map of hash -> filename."""
