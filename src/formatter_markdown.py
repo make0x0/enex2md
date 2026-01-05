@@ -17,6 +17,7 @@ class MarkdownFormatter:
             front_matter = {
                 'title': title,
                 'created': str(note_data.get('created')),
+            }
             if note_data.get('updated'):
                  front_matter['updated'] = str(note_data.get('updated'))
 
