@@ -152,9 +152,25 @@ class PdfFormatter(HtmlFormatter):
                 fill: black;
                 stroke: black;
             }
-            /* Universal fallback for borders to prevent crashes on obscure elements */
+            /* Avoid global wildcards as they cause layout freeze */
+            /* Ensure tables don't get stuck in infinite loops due to fixed heights */
+            tr, td, th {
+                height: auto !important;
+            }
+            
+            /* Universal Safetynet for NoneType Color Crash */
+            /* Using transparent ensures a valid color tuple exists without drawing unwanted borders */
             * {
-                border-color: black;
+                border-color: transparent;
+                outline-color: transparent;
+                text-decoration-color: black; /* Text decoration usually needs to be visible if present */
+                column-rule-color: transparent; 
+                -webkit-text-emphasis-color: transparent;
+            }
+            
+            /* Restore visibility for standard bordered elements */
+            input, button, select, textarea, fieldset, legend, hr, table, th, td {
+                border-color: gray; 
             }
         """
         if soup.head:
