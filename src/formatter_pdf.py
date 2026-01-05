@@ -183,6 +183,17 @@ class PdfFormatter(HtmlFormatter):
                          original_pdf = pdf_files[0]
                          output_path = target_dir / f"{self._sanitize_filename(title)}.pdf"
                          shutil.copy2(original_pdf, output_path)
+                         
+                         # Smart Mode: Update timestamp to match note data
+                         ts_date = note_data.get('updated') or note_data.get('created')
+                         if ts_date:
+                             try:
+                                 ts_timestamp = ts_date.timestamp()
+                                 os.utime(output_path, (ts_timestamp, ts_timestamp))
+                                 logging.debug(f"Smart PDF Mode: Set timestamp to {ts_date}")
+                             except Exception as e:
+                                 logging.warning(f"Smart PDF Mode: Failed to set timestamp: {e}")
+
                          logging.info(f"Smart PDF Mode: Copied original PDF for '{title}'")
                          # Pass the original PDF filename to exclude it from attachments
                          self._copy_to_pdf_folder(output_path, target_dir, note_data, exclude_filenames={original_pdf.name})
