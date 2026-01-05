@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+
+# Mac
+.DS_Store
+
+# Virtual Environment
+venv/
+env/
+
+# Project Specific
+test_sample.enex
+setup_test.py
+test_output/
+Converted_Notes/
+
+# Default Config (User generated)
+config.yaml
+
+# Assets downloaded at build/runtime
+assets/crypto-js.min.js
