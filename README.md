@@ -55,14 +55,25 @@ docker compose run --rm app -r path/to/EnexFolder
 docker compose run --rm app path/to/note.enex -o ./my_output --format markdown
 ```
 
-### 外部ディレクトリ（プロジェクト外）のファイルを変換する場合
+### 外部ディレクトリのファイルを変換する場合（推奨）
 
-Dockerコンテナはプロジェクト外のファイルに直接アクセスできないため、`-v` オプションでマウントする必要があります。
+ホスト側の「入力フォルダ」と「出力フォルダ」の両方をDockerコンテナにマウントすることで、任意の場所のファイルを処理し、任意の場所に保存できます。
+わかりやすくするために、コンテナ内ではそれぞれ `/input`, `/output` という固定パスにマウントすることをお勧めします。
 
+**コマンド例:**
 ```bash
-# ホストの /absolute/path/to/data をコンテナ内の /data としてマウントして処理
-docker compose run --rm -v /absolute/path/to/data:/data app -r /data -o ./my_output
+docker compose run --rm \
+  -v "/Users/user-name/ev-backup-work/enex_dir":/input \
+  -v "/Users/user-name/ev-backup-work/output_dir/en-output":/output \
+  app -r /input -o /output
 ```
+
+**解説:**
+1. `-v "ホストの入力パス":/input`: 入力データをコンテナの `/input` にマウント。
+2. `-v "ホストの出力パス":/output`: 出力先をコンテナの `/output` にマウント。
+3. アプリ引数: `-r /input` で入力を、`-o /output` で出力を指定。
+
+この方法であれば、コンテナ内部の複雑なパスを気にせずに利用できます。
 
 ## 出力構造
 
@@ -74,9 +85,12 @@ Converted_Notes/
   │   └── 2023-01-01_会議議事録/
   │       ├── index.html            # HTML版 (ブラウザ閲覧用)
   │       ├── content.md            # Markdown版 (Obsidian等用)
-  │       ├── image.png             # 添付ファイル
-  │       ├── crypto-js.min.js      # 暗号化復号用ライブラリ
-  │       └── decrypt_note.js       # 復号ロジック
+  │       ├── _assets/              # 生成用アセット (JS)
+  │       │   ├── crypto-js.min.js
+  │       │   └── decrypt_note.js
+  │       └── note_contents/        # ノート添付ファイル
+  │           ├── image.png
+  │           └── doc.pdf
   ├── OtherNotes/
   │   └── ...
 ```

@@ -1,109 +1,141 @@
 import os
+import shutil
+import logging
 from pathlib import Path
+from bs4 import BeautifulSoup
 
 class HtmlFormatter:
     def __init__(self, config):
         self.config = config
-        self.template_path = config.get('content', {}).get('html_template')
+        self.crypto_js_filename = "crypto-js.min.js"
+        self.decrypt_js_filename = "decrypt_note.js"
+        
+        # Load template
+        template_path = config.get('content', {}).get('html_template')
+        if template_path and os.path.exists(template_path):
+             with open(template_path, 'r', encoding='utf-8') as f:
+                 self.template = f.read()
+        else:
+             self.template = self._get_default_template()
 
     def generate(self, target_dir, intermediate_html, title, note_data):
-        # We need to copy/link JS assets.
-        # For simplicity, we assume they are copied to a specialized 'lib' folder in root output
-        # or we just assume they are available relatively.
-        # To make it fully self-contained per folder is safest but redundant.
-        # Let's use a shared lib folder in the root output dir, and link to it with "../../lib/..."
-        # Actually, SPEC says "成果物ディレクトリにライブラリのファイルを自動コピーする" (Copy lib files to artifact directory).
-        # Let's assume there is a 'lib' folder at the root of 'Converted_Notes'.
+        """Generates index.html and copies necessary assets."""
         
-        # Calculate relative path to lib root.
-        # Structure is Root / Folder / NoteFolder / index.html
-        # So we need to go up 2 levels.
-        # Wait, structure is Root / Date_Title / index.html (flat per note) OR Root / Notebook / Note ?
-        # SPEC says: Root / Folder (Category?? No, SPEC Example: Work/ProjectA/Date_Note)
-        # The current implementation in Converter just puts it in OutputRoot / Date_Title directly because we don't track original notebooks yet in Parser.
-        # Let's adhere to current simple structure: OutputRoot / Date_Title
-        # So relative path to root is "../"
+        # Prepare assets directory
+        assets_dir = target_dir / "_assets"
+        assets_dir.mkdir(exist_ok=True)
         
-        # NOTE: If we want to support notebook folders, we need that info from Parser. 
-        # Current Parser extracts tags, but not notebook name (which is not in .enex usually, unless we infer from filename or use a specific export).
-        # SPEC says "Input: ./MyData/Work/ProjectA.enex" -> "Output: ./Converted/Work/ProjectA/..."
-        # So we need to mirror input directory structure relative to input root.
-        # This logic needs to be in the main loop or converter calling.
-        # For this class, let's assume valid relative path is passed or we inject the script content directly?
-        # Injecting content is safer for "single file" feel but crypto-js is big. "offline" usually implies local files.
-        # Let's inject a script tag pointing to relative path.
+        # Copy assets to _assets/
+        self._copy_asset(self.crypto_js_filename, assets_dir / self.crypto_js_filename)
+        self._copy_asset(self.decrypt_js_filename, assets_dir / self.decrypt_js_filename)
         
-        # Simplified: We will assume we put 'lib' in OutputRoot.
-        # The Note is in OutputRoot/RelativeSubDir/NoteDir.
-        # We need to compute 'depth' to find back to OutputRoot.
+        # Parse template
+        soup = BeautifulSoup(self.template, 'html.parser')
         
-        # For now, let's write the HTML.
+        # Set Title
+        if soup.title:
+            soup.title.string = title
         
-        html_content = f"""<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<title>{title}</title>
-<style>
-  body {{ font-family: sans-serif; max-width: 800px; margin: 2em auto; padding: 0 1em; }}
-  .en-crypt-container {{ border: 1px solid #ccc; padding: 1em; background: #f9f9f9; margin: 1em 0; }}
-  .en-crypt-content {{ display: none; margin-top: 1em; padding: 1em; border: 1px solid #ddd; background: #fff; }}
-  .en-crypt-error {{ color: red; display: none; }}
-</style>
-<script src="crypto-js.min.js"></script>
-<script src="decrypt_note.js"></script>
-</head>
-<body>
-<h1>{title}</h1>
-<div class="note-meta">
-  <p>Created: {note_data.get('created')}</p>
-  <p>Tags: {', '.join(note_data.get('tags', []))}</p>
-</div>
-<hr>
-<div class="note-content">
-{intermediate_html}
-</div>
-<script>
-  // Auto-init decryption UI if needed
-  document.addEventListener('DOMContentLoaded', function() {{
-      initDecryption();
-  }});
-</script>
-</body>
-</html>"""
+        # Insert Meta
+        meta_div = soup.find('div', class_='note-meta')
+        if meta_div:
+            # Clear existing dummy content
+            meta_div.clear()
+            
+            created_p = soup.new_tag('p')
+            created_p.string = f"Created: {note_data.get('created', '')}"
+            meta_div.append(created_p)
+            
+            tags = note_data.get('tags', [])
+            if tags:
+                tags_p = soup.new_tag('p')
+                tags_p.string = f"Tags: {', '.join(tags)}"
+                meta_div.append(tags_p)
+                
+            source_url = note_data.get('source_url')
+            if source_url:
+                url_p = soup.new_tag('p')
+                url_a = soup.new_tag('a', href=source_url)
+                url_a.string = "Source URL"
+                url_p.append(url_a)
+                meta_div.append(url_p)
+
+        # Update Heading
+        h1 = soup.find('h1')
+        if h1:
+            h1.string = title
+
+        # Add Script Tags pointing to _assets/
+        body = soup.body
+        if body:
+            s1 = soup.new_tag("script", src="_assets/crypto-js.min.js")
+            body.append(s1)
+            s2 = soup.new_tag("script", src="_assets/decrypt_note.js")
+            body.append(s2)
+            
+            # Add auto-init script
+            s_init = soup.new_tag("script")
+            s_init.string = "document.addEventListener('DOMContentLoaded', function() { initDecryption(); });"
+            body.append(s_init)
+
+        # Insert Content
+        content_div = soup.find('div', class_='note-content')
+        if not content_div:
+            # Fallback if class not found, try id
+            content_div = soup.find(id='note-content')
+        
+        if content_div:
+            content_div.clear()
+            # Parse intermediate HTML to insert safely
+            content_soup = BeautifulSoup(intermediate_html, 'html.parser')
+            content_div.append(content_soup)
         
         output_path = target_dir / "index.html"
         with open(output_path, 'w', encoding='utf-8') as f:
-            f.write(html_content)
-        
+            f.write(str(soup))
+            
+        return output_path
+
+    def _copy_asset(self, filename, dest_path):
+        """Copies an asset file from local assets or system assets to destination."""
         input_assets_dir = Path("assets")
         system_assets_dir = Path("/opt/enex2md/assets")
         
-        import shutil
+        src_local = input_assets_dir / filename
+        src_system = system_assets_dir / filename
         
-        # Files to copy
-        # We need crypto-js (external) and decrypt_note.js (internal/local)
-        
-        # 1. crypto-js.min.js
-        src_local = input_assets_dir / "crypto-js.min.js"
-        src_system = system_assets_dir / "crypto-js.min.js"
-        dst = target_dir / "crypto-js.min.js"
-        
-        if src_local.exists():
-             shutil.copy2(src_local, dst)
-        elif src_system.exists():
-             shutil.copy2(src_system, dst)
-        else:
-             logging.warning("crypto-js.min.js not found in assets/ or /opt/enex2md/assets/")
+        try:
+            if src_local.exists():
+                shutil.copy2(src_local, dest_path)
+            elif src_system.exists():
+                shutil.copy2(src_system, dest_path)
+            else:
+                logging.warning(f"Asset not found: {filename} (checked {src_local} and {src_system})")
+        except Exception as e:
+            logging.error(f"Failed to copy asset {filename}: {e}")
 
-        # 2. decrypt_note.js (This is part of our code, so it should be in assets/ normally)
-        src_local_decrypt = input_assets_dir / "decrypt_note.js"
-        dst_decrypt = target_dir / "decrypt_note.js"
-        if src_local_decrypt.exists():
-             shutil.copy2(src_local_decrypt, dst_decrypt)
-        else:
-             logging.warning("decrypt_note.js not found in local assets/")
-
-        return output_path
-
-        return output_path
+    def _get_default_template(self):
+        return """<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Note Title</title>
+<style>
+  body { font-family: sans-serif; max-width: 800px; margin: 2em auto; padding: 0 1em; }
+  .en-crypt-container { border: 1px solid #ccc; padding: 1em; background: #f9f9f9; margin: 1em 0; }
+  .en-crypt-content { display: none; margin-top: 1em; padding: 1em; border: 1px solid #ddd; background: #fff; }
+  .en-crypt-error { color: red; display: none; }
+  img { max-width: 100%; height: auto; }
+</style>
+</head>
+<body>
+<h1>Note Title</h1>
+<div class="note-meta">
+  <p>Created: ...</p>
+  <p>Tags: ...</p>
+</div>
+<hr>
+<div class="note-content" id="note-content">
+</div>
+</body>
+</html>"""

@@ -46,14 +46,21 @@ Evernoteからエクスポートされた `.enex` ファイルを読み込み、
 
 **出力結果:**
 ```text
+**出力結果:**
+```text
 ./Converted/
   ├── Work/
   │   └── ProjectA/                 # ENEXファイル名に基づくフォルダ
   │       ├── 2023-01-01_会議議事録/
-  │       │   ├── index.html
-  │       │   └── ...
-  │       └── 2023-01-02_アイデア/
-  │           └── ...
+  │       │   ├── index.html                # 生成されたHTML
+  │       │   ├── content.md                # 生成されたMarkdown
+  │       │   ├── _assets/                  # 生成に必要なアセット (JSなど)
+  │       │   │   ├── crypto-js.min.js
+  │       │   │   └── decrypt_note.js
+  │       │   └── note_contents/            # ノート自体の添付ファイル
+  │       │       ├── image001.png
+  │       │       └── doc.pdf
+  │       └── ...
 ```
 
 ## 4. 設定ファイル仕様 (config.yaml)

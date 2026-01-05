@@ -36,8 +36,13 @@ class NoteConverter:
         target_dir.mkdir(parents=True, exist_ok=True)
         logging.info(f"Processing note: {title} -> {target_dir}")
 
+        # Create subdirectories
+        contents_dir = target_dir / "note_contents"
+        contents_dir.mkdir(exist_ok=True)
+
         # Process Resources
-        resource_map = self._process_resources(note_data['resources'], target_dir)
+        # Pass contents_dir instead of target_dir
+        resource_map = self._process_resources(note_data['resources'], contents_dir)
         
         # Convert Content
         if note_data['content']:
@@ -94,12 +99,15 @@ class NoteConverter:
             media_hash = media.get('hash')
             if media_hash in resource_map:
                 filename = resource_map[media_hash]
+                # Prepend folder name for link
+                link_path = f"note_contents/{filename}"
+                
                 mime = media.get('type', '')
                 
                 if mime.startswith('image/'):
-                    new_tag = soup.new_tag('img', src=filename, alt=filename)
+                    new_tag = soup.new_tag('img', src=link_path, alt=filename)
                 else:
-                    new_tag = soup.new_tag('a', href=filename)
+                    new_tag = soup.new_tag('a', href=link_path)
                     new_tag.string = filename
                 
                 media.replace_with(new_tag)
