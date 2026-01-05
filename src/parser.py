@@ -69,10 +69,16 @@ class NoteParser:
             
         # If no filename, maybe try to guess extension from mime later
         
+        recognition = None
+        reco_elem = res_elem.find('recognition')
+        if reco_elem is not None and reco_elem.text:
+             recognition = reco_elem.text.strip()
+        
         return {
             'data_b64': b64_data,
             'mime': mime,
-            'filename': filename
+            'filename': filename,
+            'recognition': recognition
         }
 
     def _parse_date(self, date_str):

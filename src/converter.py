@@ -83,6 +83,12 @@ class NoteConverter:
                 with open(file_path, 'wb') as f:
                     f.write(data)
                 
+                # Save recognition data if available
+                if res.get('recognition'):
+                    reco_path = file_path.with_suffix(file_path.suffix + ".xml")
+                    with open(reco_path, 'w', encoding='utf-8') as f:
+                        f.write(res['recognition'])
+                
                 res_map[md5_hash] = filename
                 
             except Exception as e:
