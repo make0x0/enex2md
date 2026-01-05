@@ -88,6 +88,12 @@ class HtmlFormatter:
             content_div.clear()
             # Parse intermediate HTML to insert safely
             content_soup = BeautifulSoup(intermediate_html, 'html.parser')
+            
+            # Post-process for embedding if enabled
+            embed_images = self.config.get('content', {}).get('embed_images', False)
+            if embed_images:
+                 self._embed_images(content_soup, note_data.get('resources', []))
+            
             content_div.append(content_soup)
         
         output_path = target_dir / "index.html"
@@ -95,6 +101,119 @@ class HtmlFormatter:
             f.write(str(soup))
             
         return output_path
+
+    def _embed_images(self, soup, resources):
+        """Replaces img src with Base64 data and adds OCR text."""
+        import base64
+        import hashlib
+        
+        # Build lookup map from resources (md5 -> resource)
+        # Note: We need to match filename in link_path to resource
+        # link_path is like "note_contents/filename.ext"
+        
+        # But wait, how do we match?
+        # converter.py generated filenames based on hash or original filename.
+        # We can try to reconstruct the map or match by filename.
+        # But filename uniqueness logic in converter was: sanitize(res['filename'] or hash+ext)
+        # Re-implementing that logic here is risky.
+        
+        # Better approach: Iterate img tags, get filename from src, find matching resource.
+        # Img src is "note_contents/FILENAME"
+        
+        # Let's map filename -> resource
+        filename_map = {}
+        for res in resources:
+            if not res.get('data_b64'): continue
+            
+            # Reconstruct filename logic from converter...
+            # This is BAD duplication.
+            # OPTION: pass 'resource_map' from converter to here via note_data?
+            # note_data currently structure from PARSER.
+            # converter.convert_note RETURNS 'target_dir, intermediate_html, title, created, full_data'
+            # 'full_data' IS note_data.
+            pass
+
+        # Since we don't have the resource_map here, and re-calculating filenames is error prone,
+        # let's try to match by MD5 if possible?
+        # But HTML has filenames.
+        
+        # OK, let's look at available data.
+        # If we can't reliably map, we might fail to embed some.
+        
+        # Alternative: We can compute MD5 of all resources again and match keys?
+        # But we don't know which MD5 corresponds to which filename easily without logic.
+        
+        # Let's import logic or duplicates?
+        # Or, just iterate resources, calculate "candidate" filename using same logic and store in map.
+        
+        import mimetypes
+        import re
+        sanitize_char = self.config.get('output', {}).get('filename_sanitize_char', '_')
+        
+        def sanitize(name):
+             return re.sub(r'[<>:"/\\|?*]', sanitize_char, name).strip()
+        
+        for res in resources:
+            if not res.get('data_b64'): continue
+            
+            try:
+                data = base64.b64decode(res['data_b64'])
+                md5_hash = hashlib.md5(data).hexdigest()
+                
+                filename = res.get('filename')
+                if not filename:
+                    ext = mimetypes.guess_extension(res.get('mime', '')) or '.bin'
+                    filename = f"{md5_hash}{ext}"
+                
+                final_filename = sanitize(filename)
+                filename_map[final_filename] = res
+                
+            except Exception as e:
+                logging.warning(f"Error preparing resource for embedding: {e}")
+
+        # Now replace
+        for img in soup.find_all('img'):
+            src = img.get('src', '')
+            if src.startswith('note_contents/'):
+                filename = src.split('/')[-1]
+                if filename in filename_map:
+                    res = filename_map[filename]
+                    mime = res.get('mime', 'image/png')
+                    
+                    # Replace src
+                    img['src'] = f"data:{mime};base64,{res['data_b64']}"
+                    
+                    # Add OCR
+                    reco_xml = res.get('recognition')
+                    if reco_xml:
+                        ocr_text = self._extract_text_from_reco(reco_xml)
+                        if ocr_text:
+                             # Container logic
+                             # Create hidden container for searchability
+                             container = soup.new_tag('span')
+                             
+                             # We need to replace img in DOM, so we copy it or wrap it
+                             img.wrap(container)
+                             # img is now inside container
+                             
+                             hidden_div = soup.new_tag('div')
+                             hidden_div['style'] = "display:none;" 
+                             hidden_div.string = ocr_text
+                             container.append(hidden_div)
+
+    def _extract_text_from_reco(self, reco_xml):
+        """Extract text content from Evernote recognition XML."""
+        try:
+             from lxml import etree
+             root = etree.fromstring(reco_xml.encode('utf-8'))
+             words = []
+             for t in root.iter('t'):
+                 if t.text:
+                     words.append(t.text)
+             return " ".join(words)
+        except Exception as e:
+            logging.warning(f"Failed to parse recognition XML: {e}")
+            return None
 
     def _copy_asset(self, filename, dest_path):
         """Copies an asset file from local assets or system assets to destination."""

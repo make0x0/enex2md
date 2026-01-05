@@ -65,7 +65,7 @@ class NoteConverter:
         """Decodes and saves resources. Returns a map of hash -> filename."""
         res_map = {}
         for res in resources:
-            if not res['data_b64']:
+            if not res.get('data_b64'): # Use .get() for safety
                 continue
             
             try:
@@ -73,10 +73,21 @@ class NoteConverter:
                 md5_hash = hashlib.md5(data).hexdigest()
                 
                 # Determine filename
-                filename = res['filename']
+                filename = res.get('filename')
                 if not filename:
-                    ext = mimetypes.guess_extension(res['mime']) or '.dat'
+                    ext = mimetypes.guess_extension(res.get('mime', '')) or '.bin' # Changed default to .bin
                     filename = f"{md5_hash}{ext}"
+                
+                filename = self._sanitize_filename(filename) # Sanitize filename
+                
+                # Check config for embed
+                embed_images = self.config.get('content', {}).get('embed_images', False)
+                mime = res.get('mime', '')
+                is_image = mime.startswith('image/')
+                
+                should_save = True
+                if embed_images and is_image:
+                    should_save = False # Skip saving image file if embedding is enabled
                 
                 # Check for collision or just overwrite
                 file_path = target_dir / filename
@@ -84,16 +95,62 @@ class NoteConverter:
                     f.write(data)
                 
                 # Save recognition data if available
-                if res.get('recognition'):
+                # If NOT available and OCR is enabled, try OCR
+                
+                recognition = res.get('recognition')
+                ocr_performed = False
+                
+                ocr_enabled = self.config.get('ocr', {}).get('enabled', False)
+                if not recognition and ocr_enabled and is_image:
+                     try:
+                         import pytesseract
+                         from PIL import Image
+                         import io
+                         
+                         lang = self.config.get('ocr', {}).get('language', 'jpn')
+                         image = Image.open(io.BytesIO(data))
+                         
+                         # Perform OCR
+                         text = pytesseract.image_to_string(image, lang=lang)
+                         if text.strip():
+                             # Wrap in fake XML structure to match existing logic
+                             # Or better, just store clean text and handle in formatter?
+                             # For compatibility with formatter_html which expects XML parsing:
+                             # <recoIndex><item><t>TEXT</t></item></recoIndex>
+                             # We escape special chars for basic safety
+                             import xml.sax.saxutils
+                             safe_text = xml.sax.saxutils.escape(text)
+                             recognition = f"<recoIndex><item><t>{safe_text}</t></item></recoIndex>"
+                             ocr_performed = True
+                             logging.info(f"   - OCR Performed on '{filename}'")
+                     except Exception as e:
+                         logging.warning(f"   - OCR Failed for '{filename}': {e}")
+
+                if recognition:
                     reco_path = file_path.with_suffix(file_path.suffix + ".xml")
                     with open(reco_path, 'w', encoding='utf-8') as f:
-                        f.write(res['recognition'])
+                        f.write(recognition)
+                    if ocr_performed:
+                        logging.info(f"   - Resource '{filename}': OCR text saved.")
+                    else:
+                        logging.info(f"   - Resource '{filename}': Recognition data saved.")
+                else:
+                    logging.info(f"   - Resource '{filename}': No recognition data.")
                 
-                res_map[md5_hash] = filename
+                # Store full info in map
+                res_info = {
+                    'filename': filename,
+                    'data_b64': res['data_b64'], 
+                    'mime': mime,
+                    'recognition': recognition 
+                }
+                res_map[md5_hash] = res_info
                 
             except Exception as e:
-                logging.error(f"Failed to process resource: {e}")
+                logging.error(f"Error processing resource: {e}") 
         
+        # Populate instance var for easy access in create_intermediate_html
+        self._resources_by_hash = res_map
         return res_map
 
     def _create_intermediate_html(self, enml_content, resource_map):
@@ -104,14 +161,17 @@ class NoteConverter:
         for media in soup.find_all('en-media'):
             media_hash = media.get('hash')
             if media_hash in resource_map:
-                filename = resource_map[media_hash]
                 # Prepend folder name for link
+                filename = resource_map[media_hash]['filename']
                 link_path = f"note_contents/{filename}"
                 
                 mime = media.get('type', '')
                 
                 if mime.startswith('image/'):
-                    new_tag = soup.new_tag('img', src=link_path, alt=filename)
+                     new_tag = soup.new_tag('img', src=link_path, alt=filename)
+                     # We leave embedding to HtmlFormatter
+                     # We leave OCR injection to HtmlFormatter (or handle it here? No, let's keep intermediate clean for MD)
+
                 elif mime == 'application/pdf':
                     # Embed PDF for preview
                     # Use object tag for better compatibility and fallback

@@ -62,29 +62,29 @@ def process_enex(enex_path, config):
     # Initialize components
     base_output_root = config.get('output', {}).get('root_dir', 'Converted_Notes')
     
-    # Create a subfolder for this ENEX file
     enex_stem = Path(enex_path).stem
-    output_root = Path(base_output_root) / enex_stem
-    
+    output_root_for_enex = Path(base_output_root) / enex_stem
+    converter.set_output_root(output_root_for_enex) # Update converter's output root
+
     parser = NoteParser(enex_path)
-    converter = NoteConverter(output_root, config)
-    
-    html_formatter = HtmlFormatter(config)
-    md_formatter = MarkdownFormatter(config)
-    
-    formats = config.get('output', {}).get('formats', ['html'])
-    
     count = 0
+    
     for note_data in parser.parse():
         try:
             target_dir, intermediate_html, title, created, full_data = converter.convert_note(note_data)
             
-            if 'html' in formats:
+            # Generate HTML (Always default essentially, or used as base)
+            if 'html' in config['output']['formats']:
                 html_formatter.generate(target_dir, intermediate_html, title, full_data)
-                
-            if 'markdown' in formats:
-                md_formatter.generate(target_dir, intermediate_html, title, full_data)
             
+            # Generate Markdown
+            if md_formatter:
+                md_formatter.generate(target_dir, intermediate_html, title, full_data)
+                
+            # Generate PDF
+            if pdf_formatter:
+                pdf_formatter.generate(target_dir, intermediate_html, title, full_data)
+                
             count += 1
         except Exception as e:
             logging.error(f"Error converting note '{note_data.get('title')}': {e}", exc_info=True)
@@ -169,8 +169,62 @@ def main():
 
     logging.info(f"Found {len(enex_files)} .enex files.")
 
+    # Initialize formatters
+    html_formatter = HtmlFormatter(config)
+    
+    md_formatter = None
+    if 'markdown' in config.get('output', {}).get('formats', []):
+        md_formatter = MarkdownFormatter(config)
+        
+    pdf_formatter = None
+    if 'pdf' in config.get('output', {}).get('formats', []):
+        try:
+            from src.formatter_pdf import PdfFormatter
+            pdf_formatter = PdfFormatter(config)
+        except ImportError:
+            logging.error("Failed to import PdfFormatter. Check dependencies.")
+
+    logging.info(f"Found {len(enex_files)} .enex files.")
+
     for enex_file in enex_files:
-        process_enex(enex_file, config)
+        # Create a subfolder for this ENEX file
+        enex_stem = Path(enex_file).stem
+        output_root_for_enex = Path(base_output_root) / enex_stem
+        
+        converter = NoteConverter(output_root_for_enex, config)
+        
+        process_enex(enex_file, config, converter, html_formatter, md_formatter, pdf_formatter)
+
+def process_enex(enex_path, config, converter, html_formatter, md_formatter=None, pdf_formatter=None):
+    logging.info(f"Processing ENEX file: {enex_path}")
+    
+    parser = NoteParser(enex_path)
+    count = 0
+    
+    for note_data in parser.parse():
+        try:
+            target_dir, intermediate_html, title, created, full_data = converter.convert_note(note_data)
+            
+            # Generate HTML
+            if 'html' in config['output']['formats']:
+                html_formatter.generate(target_dir, intermediate_html, title, full_data)
+            
+            # Generate Markdown
+            if md_formatter:
+                md_formatter.generate(target_dir, intermediate_html, title, full_data)
+                
+            # Generate PDF
+            if pdf_formatter:
+                pdf_formatter.generate(target_dir, intermediate_html, title, full_data)
+                
+            count += 1
+        except Exception as e:
+            logging.error(f"Error converting note '{note_data.get('title')}': {e}", exc_info=True)
+
+    logging.info(f"Finished {enex_path}: {count} notes converted.")
+
+if __name__ == "__main__":
+    main()
 
 if __name__ == "__main__":
     main()

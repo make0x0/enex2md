@@ -1,6 +1,7 @@
 from lxml import etree
 from datetime import datetime
 import dateutil.parser
+import logging
 
 class NoteParser:
     def __init__(self, file_path):
@@ -71,9 +72,22 @@ class NoteParser:
         
         recognition = None
         reco_elem = res_elem.find('recognition')
-        if reco_elem is not None and reco_elem.text:
-             recognition = reco_elem.text.strip()
         
+        # Debug logging to investigate missing recognition
+        # Log all children tags to see what's actually there
+        # resource_children = [child.tag for child in res_elem]
+        # logging.info(f"Resource children: {resource_children}")
+        
+        if reco_elem is not None:
+            if reco_elem.text:
+                recognition = reco_elem.text.strip()
+            else:
+                 logging.warning("Found <recognition> tag but it was empty.")
+        else:
+            # Check if it exists with namespace?
+            # logging.info("No <recognition> tag found in this resource.")
+            pass
+            
         return {
             'data_b64': b64_data,
             'mime': mime,
