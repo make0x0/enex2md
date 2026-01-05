@@ -41,8 +41,14 @@ class NoteConverter:
         contents_dir.mkdir(exist_ok=True)
 
         # Process Resources
-        # Pass contents_dir instead of target_dir
-        resource_map = self._process_resources(note_data['resources'], contents_dir)
+        # Pass contents_dir instead
+        # Process resources
+        seen_filenames = {}
+        resource_map = self._process_resources(note_data.get('resources', []), contents_dir, seen_filenames)
+        
+        # CRITICAL: Update note_data with processed resources (includes OCR data)
+        # This ensures formatters receive the processed resources with recognition/OCR text
+        note_data['resources'] = resource_map
         
         # Convert Content
         if note_data['content']:
@@ -61,7 +67,7 @@ class NoteConverter:
         """Sanitize string to be safe for filenames."""
         return re.sub(r'[<>:"/\\|?*]', self.sanitize_char, name).strip()
 
-    def _process_resources(self, resources, target_dir):
+    def _process_resources(self, resources, target_dir, seen_filenames):
         """Decodes and saves resources. Returns a map of hash -> filename."""
         res_map = {}
         for res in resources:
@@ -80,6 +86,18 @@ class NoteConverter:
                 
                 filename = self._sanitize_filename(filename) # Sanitize filename
                 
+                # Handle filename collision
+                original_filename = filename
+                counter = 1
+                name_part, ext_part = os.path.splitext(filename)
+                while filename in seen_filenames:
+                    filename = f"{name_part}_{counter}{ext_part}"
+                    counter += 1
+                seen_filenames[filename] = True
+                
+                if filename != original_filename:
+                    logging.debug(f"   - Renamed '{original_filename}' to '{filename}' to avoid collision")
+                
                 # Check config for embed
                 embed_images = self.config.get('content', {}).get('embed_images', False)
                 mime = res.get('mime', '')
@@ -89,7 +107,7 @@ class NoteConverter:
                 if embed_images and is_image:
                     should_save = False # Skip saving image file if embedding is enabled
                 
-                # Check for collision or just overwrite
+                # Save file
                 file_path = target_dir / filename
                 with open(file_path, 'wb') as f:
                     f.write(data)

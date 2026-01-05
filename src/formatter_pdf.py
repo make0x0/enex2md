@@ -3,6 +3,7 @@ import base64
 import hashlib
 import re
 import mimetypes
+import shutil
 from pathlib import Path
 from bs4 import BeautifulSoup
 from src.formatter_html import HtmlFormatter
@@ -65,6 +66,27 @@ class PdfFormatter(HtmlFormatter):
              for s in soup.body.find_all('script'):
                  s.decompose()
 
+        # Add PDF-specific CSS for image sizing
+        # Ensures tall images (like receipts) fit within page bounds
+        pdf_style = soup.new_tag('style')
+        pdf_style.string = """
+            img {
+                max-width: 100%;
+                max-height: 90vh;  /* Leave margin for header/footer */
+                width: auto;
+                height: auto;
+                object-fit: contain;
+                page-break-inside: avoid;
+            }
+            .note-content {
+                page-break-inside: auto;
+            }
+        """
+        if soup.head:
+            soup.head.append(pdf_style)
+        elif soup.body:
+            soup.body.insert(0, pdf_style)
+
         # Insert Content
         content_div = soup.find('div', class_='note-content')
         if not content_div:
@@ -74,11 +96,75 @@ class PdfFormatter(HtmlFormatter):
             content_div.clear()
             content_soup = BeautifulSoup(intermediate_html, 'html.parser')
             
-            # ALWAYS Embed images for PDF generation
-            # WeasyPrint needs access to images; Base64 is reliable.
-            # Or we can let WeasyPrint resolve paths if base_url is set correctly.
-            # But embedding is safer given our complex path structure "note_contents/..."
-            self._embed_images(content_soup, note_data.get('resources', []))
+            # Smart PDF Mode Check
+            # If the note contains ONLY one PDF attachment (and minimal text), copy original PDF.
+            resources = note_data.get('resources', [])
+            
+            # resources might be a dict keyed by MD5 hash (from converter.py)
+            # Convert to list for consistent iteration
+            if isinstance(resources, dict):
+                resources_list = list(resources.values())
+            else:
+                resources_list = resources
+            
+            pdf_resources = [r for r in resources_list if isinstance(r, dict) and r.get('mime') == 'application/pdf']
+            
+            # Check text length (strip whitespace)
+            text_content = content_soup.get_text().strip()
+            # Allow some title overlap or small noise (e.g. filename repetition)
+            # 100 chars is arbitrary but safe for "just a file" notes
+            is_minimal_text = len(text_content) < 100 
+            
+            if len(pdf_resources) == 1 and is_minimal_text:
+                pdf_res = pdf_resources[0]
+                # We need to find the file.
+                # In converter.py, we decided filename. We need to find the correct file in target_dir/note_contents
+                # We can iterate the dir or try to match.
+                # Or reuse logic from HtmlFormatter._embed_images if we had it.
+                # Simple approach: Search for file in note_contents with matching MD5?
+                # Or just grab the first PDF file in note_contents if there is only 1 PDF resource?
+                
+                # Let's search by extension
+                note_contents_dir = target_dir / "note_contents"
+                if note_contents_dir.exists():
+                     pdf_files = list(note_contents_dir.glob("*.pdf"))
+                     if len(pdf_files) == 1:
+                         # Found candidate
+                         original_pdf = pdf_files[0]
+                         output_path = target_dir / f"{self._sanitize_filename(title)}.pdf"
+                         shutil.copy2(original_pdf, output_path)
+                         logging.info(f"Smart PDF Mode: Copied original PDF for '{title}'")
+                         return output_path
+                
+            # Match logic from HtmlFormatter but apply PDF-specific visibility
+            # In HTML we used display:none. For PDF we want opacity:0 and position:absolute
+            # We need to ensure existing ocr-text divs are styled correctly.
+            # Let's add a style tag.
+            style_tag = soup.new_tag('style')
+            # Use specific class if possible, or generic display:none override?
+            # HtmlFormatter uses <div style="display:none;">. 
+            # We need to change that INLINE style or override it.
+            # Since inline style has high specificity, we must replace the inline attribute or use !important on ID/Class.
+            # But HtmlFormatter injected via `_embed_images`.
+            
+            # Let's override `_embed_images` behavior or post-process the soup.
+            # The base definition of `_embed_images` in `HtmlFormatter` uses:
+            # new_div = soup.new_tag('div', style="display:none;")
+            
+            # So we iterate and change style.
+            # NOTE: We skip calling _embed_images here because _embed_images_pdf handles embedding AND OCR injection
+            # self._embed_images(content_soup, resources_list)
+            
+            # Post-process to fix visibility for PDF
+            for div in content_soup.find_all('div', style="display:none;"):
+                # Check if it looks like our OCR div (has text content)
+                # Better: Check if it follows an image?
+                # Or just checking style="display:none;" is risky?
+                # To be safe, let's redefine `_embed_images` in PdfFormatter to use a class.
+                pass
+            
+            # Call our custom PDF-specific embedding and OCR injection
+            self._embed_images_pdf(content_soup, resources_list)
             
             content_div.append(content_soup)
 
@@ -90,12 +176,78 @@ class PdfFormatter(HtmlFormatter):
         
         # Fix base URL for WeasyPrint if we didn't embed everything? 
         # But we embedded images. 
-        # Assets (CSS)? If template has external CSS, might fail.
-        # Default template has inline CSS.
         
         HTML(string=html_str, base_url=str(target_dir)).write_pdf(output_path)
         
         return output_path
+
+    def _embed_images_pdf(self, soup, resources):
+        """Embed images as Base64 and inject OCR text with PDF-friendly visibility."""
+        if not resources:
+            return
+
+        # resources might be a dict keyed by MD5 hash (from converter.py)
+        # or a list of resource dicts. Handle both cases.
+        if isinstance(resources, dict):
+            resource_list = list(resources.values())
+        else:
+            resource_list = resources
+        
+        # Map by filename for lookup
+        res_map_by_filename = {r.get('filename'): r for r in resource_list if isinstance(r, dict)}
+        
+        # Find all img tags
+        # We might modify the tree, so iterate over a list
+        for img in list(soup.find_all('img')):
+            src = img.get('src')
+            if not src:
+                continue
+            
+            # src is likely "note_contents/filename.png"
+            filename = Path(src).name
+            
+            res = res_map_by_filename.get(filename)
+            if res:
+                # Embed Base64
+                if res.get('data_b64') and res.get('mime'):
+                    img['src'] = f"data:{res['mime']};base64,{res['data_b64']}"
+                
+                # Inject OCR Text
+                recognition_xml = res.get('recognition')
+                if recognition_xml:
+                    text_content = self._extract_text_from_reco(recognition_xml)
+                    if text_content:
+                        # Improved Searchability for PDF:
+                        # Wrap image and text in a relative container.
+                        # Text overlays the image with transparent color.
+                        
+                        wrapper = soup.new_tag('div', style="position:relative; display:inline-block;")
+                        img.wrap(wrapper)
+                        
+                        # WeasyPrint specifics:
+                        # color: transparent works better than opacity:0 for selection in some viewers.
+                        # font-size: 10pt (readable size)
+                        # z-index: 2 (on top of image)
+                        # pointer-events: none (to click through to image if needed, though PDF doesn't support this much)
+                        
+                        # NOTE: WeasyPrint might not respect 'transparent' color correctly or Mac Preview might ignore it.
+                        # Alternative: 'fill: transparent' if it were SVG?
+                        # Another trick: color: rgba(0,0,0,0);
+                        
+                        new_div = soup.new_tag('div', style="""
+                            position: absolute; 
+                            top: 0; 
+                            left: 0; 
+                            width: 100%; 
+                            height: 100%;
+                            color: rgba(0,0,0,0); 
+                            font-size: 12pt;
+                            overflow: hidden;
+                            z-index: 10;
+                            line-height: 1.2;
+                        """)
+                        new_div.string = text_content
+                        wrapper.append(new_div)
 
     def _sanitize_filename(self, name):
         """Sanitize string to be safe for filenames."""

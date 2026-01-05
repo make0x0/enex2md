@@ -56,16 +56,9 @@ logging:
         f.write(default_config)
     print(f"Created {CONFIG_FILENAME}. You can now edit it and run the tool.")
 
-def process_enex(enex_path, config):
+def process_enex(enex_path, config, converter, html_formatter, md_formatter=None, pdf_formatter=None):
     logging.info(f"Processing ENEX file: {enex_path}")
     
-    # Initialize components
-    base_output_root = config.get('output', {}).get('root_dir', 'Converted_Notes')
-    
-    enex_stem = Path(enex_path).stem
-    output_root_for_enex = Path(base_output_root) / enex_stem
-    converter.set_output_root(output_root_for_enex) # Update converter's output root
-
     parser = NoteParser(enex_path)
     count = 0
     
@@ -73,7 +66,7 @@ def process_enex(enex_path, config):
         try:
             target_dir, intermediate_html, title, created, full_data = converter.convert_note(note_data)
             
-            # Generate HTML (Always default essentially, or used as base)
+            # Generate HTML
             if 'html' in config['output']['formats']:
                 html_formatter.generate(target_dir, intermediate_html, title, full_data)
             
@@ -123,15 +116,15 @@ def main():
     recursive = args.recursive or config.get('input', {}).get('default_recursive', False)
 
     # Determine Output directory base for logging
-    output_root_base = config.get('output', {}).get('root_dir', 'Converted_Notes')
+    base_output_root = config.get('output', {}).get('root_dir', 'Converted_Notes')
     
     # Ensure base output dir exists for log file
     try:
-        os.makedirs(output_root_base, exist_ok=True)
+        os.makedirs(base_output_root, exist_ok=True)
     except Exception as e:
         print(f"Warning: Could not create output directory for logging: {e}")
 
-    log_file_path = os.path.join(output_root_base, "enex2md.log")
+    log_file_path = os.path.join(base_output_root, "enex2md.log")
 
     # Setup Logging
     log_level = config.get('logging', {}).get('level', 'INFO')
@@ -184,8 +177,6 @@ def main():
         except ImportError:
             logging.error("Failed to import PdfFormatter. Check dependencies.")
 
-    logging.info(f"Found {len(enex_files)} .enex files.")
-
     for enex_file in enex_files:
         # Create a subfolder for this ENEX file
         enex_stem = Path(enex_file).stem
@@ -194,37 +185,6 @@ def main():
         converter = NoteConverter(output_root_for_enex, config)
         
         process_enex(enex_file, config, converter, html_formatter, md_formatter, pdf_formatter)
-
-def process_enex(enex_path, config, converter, html_formatter, md_formatter=None, pdf_formatter=None):
-    logging.info(f"Processing ENEX file: {enex_path}")
-    
-    parser = NoteParser(enex_path)
-    count = 0
-    
-    for note_data in parser.parse():
-        try:
-            target_dir, intermediate_html, title, created, full_data = converter.convert_note(note_data)
-            
-            # Generate HTML
-            if 'html' in config['output']['formats']:
-                html_formatter.generate(target_dir, intermediate_html, title, full_data)
-            
-            # Generate Markdown
-            if md_formatter:
-                md_formatter.generate(target_dir, intermediate_html, title, full_data)
-                
-            # Generate PDF
-            if pdf_formatter:
-                pdf_formatter.generate(target_dir, intermediate_html, title, full_data)
-                
-            count += 1
-        except Exception as e:
-            logging.error(f"Error converting note '{note_data.get('title')}': {e}", exc_info=True)
-
-    logging.info(f"Finished {enex_path}: {count} notes converted.")
-
-if __name__ == "__main__":
-    main()
 
 if __name__ == "__main__":
     main()
