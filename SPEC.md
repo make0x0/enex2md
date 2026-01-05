@@ -69,7 +69,9 @@ Evernoteからエクスポートされた `.enex` ファイルを読み込み、
   └── _PDF/                         # PDFのみのクリーンフォルダ
       └── Work/
           └── ProjectA/
-              └── 2023-01-01_会議議事録.pdf
+              ├── 2023-01-01_会議議事録.pdf
+              └── 2023-01-01_会議議事録_note_contents/   # 添付ファイル(Zip等)がある場合のみ
+                  └── attached_file.zip
 ```
 
 ## 4. 設定ファイル仕様 (config.yaml)

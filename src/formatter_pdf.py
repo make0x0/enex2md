@@ -219,8 +219,36 @@ class PdfFormatter(HtmlFormatter):
             content_div.append(content_soup)
 
         # PDF Output Path
-        output_path = target_dir / f"{self._sanitize_filename(title)}.pdf"
+        output_filename = f"{self._sanitize_filename(title)}.pdf"
+        output_path = target_dir / output_filename
         
+        # Attachment Link Rewriting for PDF
+        # We want links in PDF to point to: ./[PDF_DATE_NAME]_note_contents/file.zip
+        # Calc the prefix similarly to _copy_to_pdf_folder
+        
+        date_part = ""
+        created = note_data.get('created')
+        if created:
+            date_part = str(created).split(' ')[0]
+        
+        final_pdf_filename = output_filename
+        if date_part and not output_filename.startswith(date_part):
+            final_pdf_filename = f"{date_part}_{output_filename}"
+            
+        pdf_stem = Path(final_pdf_filename).stem
+        attachment_folder_name = f"{pdf_stem}_note_contents"
+        
+        # Iterate all <a> tags and rewrite if pointing to note_contents/
+        for a in soup.find_all('a'):
+            href = a.get('href', '')
+            if href.startswith('note_contents/'):
+                filename = href.split('/')[-1]
+                # Rewrite to new relative path
+                new_href = f"./{attachment_folder_name}/{filename}"
+                a['href'] = new_href
+                # Add a small icon or text to indicate attachment? (Optional)
+                # a.string = f"📎 {a.string}" 
+
         # Generate PDF
         html_str = str(soup)
         
@@ -256,18 +284,52 @@ class PdfFormatter(HtmlFormatter):
                 created = note_data.get('created')
                 # created is usually "YYYY-MM-DD HH:MM:SS" or similar
                 # We want "YYYY-MM-DD_" prefix
-                if created:
-                    date_part = str(created).split(' ')[0]
-                    # Check if filename already starts with this date to avoid double prefix 
-                    # (though sanitize usually uses date_title folder name, pdf filename is usually just Title)
-                    if not filename.startswith(date_part):
+                if not filename.startswith(date_part):
                         filename = f"{date_part}_{filename}"
 
             # Copy the PDF
             dest_path = pdf_dest_dir / filename
             shutil.copy2(pdf_path, dest_path)
-            
             logging.debug(f"Copied PDF to: {dest_path}")
+            
+            # --- Attachment Handling ---
+            # If there were attachments (links to note_contents/), we need to copy them too.
+            # The PDF generation logic (to be updated) rewrote links to point to "{filename_stem}_note_contents"
+            
+            pdf_stem = Path(filename).stem
+            attachment_folder_name = f"{pdf_stem}_note_contents"
+            
+            # Source of attachments: target_dir/note_contents
+            source_attachments_dir = target_dir / "note_contents"
+            
+            if source_attachments_dir.exists():
+                # We need to check if any file in here was actually referenced/linked in the PDF.
+                # Since we don't have the list of referenced files easily here, let's copy ALL files 
+                # that are NOT images used in the PDF (images are embedded).
+                # Actually, copying everything is safer for completeness.
+                
+                # Destination: _PDF/enex_folder/attachment_folder_name
+                dest_attachments_dir = pdf_dest_dir / attachment_folder_name
+                
+                # Check if we should copy
+                # If the PDF has NO attachments, we might create an empty folder?
+                # Ideally we only do this if there are actual attachments.
+                # Let's iterate and see if there are non-image files.
+                has_attachments = False
+                for f in source_attachments_dir.iterdir():
+                    if f.is_file():
+                        # Simple check: images are usually embedded, everything else is link.
+                        # But user might have linked images too.
+                        # Copying everything is the robust choice.
+                        has_attachments = True
+                        break
+                
+                if has_attachments:
+                    if dest_attachments_dir.exists():
+                        shutil.rmtree(dest_attachments_dir)
+                    shutil.copytree(source_attachments_dir, dest_attachments_dir)
+                    logging.info(f"Copied attachments to: {dest_attachments_dir}")
+
         except Exception as e:
             logging.warning(f"Failed to copy PDF to _PDF folder: {e}")
 
