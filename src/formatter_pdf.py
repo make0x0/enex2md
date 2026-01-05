@@ -68,18 +68,22 @@ class PdfFormatter(HtmlFormatter):
 
         # Add PDF-specific CSS for image sizing
         # Ensures tall images (like receipts) fit within page bounds
+        # WeasyPrint doesn't fully support object-fit, so use simpler constraints
         pdf_style = soup.new_tag('style')
         pdf_style.string = """
+            @page {
+                size: A4;
+                margin: 10mm;
+            }
             img {
                 max-width: 100%;
-                max-height: 250mm;  /* A4 page is 297mm, leave margin */
-                width: auto;
-                height: auto;
-                object-fit: contain;
-                page-break-inside: avoid;
+                max-height: 270mm;  /* A4 is 297mm, minus margins */
+                display: block;
+                margin: 0 auto;
             }
-            .note-content {
-                page-break-inside: auto;
+            .note-content img {
+                page-break-inside: avoid;
+                page-break-before: auto;
             }
         """
         if soup.head:
@@ -134,6 +138,7 @@ class PdfFormatter(HtmlFormatter):
                          output_path = target_dir / f"{self._sanitize_filename(title)}.pdf"
                          shutil.copy2(original_pdf, output_path)
                          logging.info(f"Smart PDF Mode: Copied original PDF for '{title}'")
+                         self._copy_to_pdf_folder(output_path, target_dir)
                          return output_path
                 
             # Match logic from HtmlFormatter but apply PDF-specific visibility
@@ -179,7 +184,33 @@ class PdfFormatter(HtmlFormatter):
         
         HTML(string=html_str, base_url=str(target_dir)).write_pdf(output_path)
         
+        # Copy PDF to _PDF folder (maintains directory structure)
+        self._copy_to_pdf_folder(output_path, target_dir)
+        
         return output_path
+    
+    def _copy_to_pdf_folder(self, pdf_path, target_dir):
+        """Copy the generated PDF to a _PDF folder, maintaining hierarchy."""
+        try:
+            # Get the output root (parent of enex folder, which is parent of note folder)
+            # Structure: output_root / enex_stem / note_folder / file.pdf
+            # We want: output_root / _PDF / enex_stem / note_folder / file.pdf
+            
+            note_folder = target_dir.name  # e.g., "2025-01-01_MyNote"
+            enex_folder = target_dir.parent.name  # e.g., "MyNotebook"
+            output_root = target_dir.parent.parent  # The base output directory
+            
+            # Create _PDF folder structure
+            pdf_dest_dir = output_root / "_PDF" / enex_folder / note_folder
+            pdf_dest_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Copy the PDF
+            pdf_dest_path = pdf_dest_dir / pdf_path.name
+            shutil.copy2(pdf_path, pdf_dest_path)
+            
+            logging.debug(f"Copied PDF to: {pdf_dest_path}")
+        except Exception as e:
+            logging.warning(f"Failed to copy PDF to _PDF folder: {e}")
 
     def _embed_images_pdf(self, soup, resources):
         """Embed images as Base64 and inject OCR text with PDF-friendly visibility."""
