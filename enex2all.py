@@ -41,9 +41,8 @@ output:
   filename_sanitize_char: "_"
   
   # 出力フォーマットのリスト
-  # 指定可能な値: "html", "markdown"
-  # 両方出力する場合: ["html", "markdown"]
-  formats: ["html", "markdown"]
+  # 指定可能な値: "html", "markdown", "pdf"
+  formats: ["html", "markdown", "pdf"]
 
 content:
   html_template: "" # 空の場合はデフォルトのシンプルなHTMLを使用
@@ -54,6 +53,14 @@ markdown:
   add_front_matter: true
   # Markdown内の改行処理
   heading_style: "atx" # atx (# Heading) or setext (Heading\\n===)
+
+ocr:
+  enabled: true
+  language: "jpn"
+  workers: 2
+
+processing:
+  note_workers: 1 # ノート並列数（※WeasyPrintの競合回避のため1推奨）
 
 logging:
   level: "INFO"
