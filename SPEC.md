@@ -93,6 +93,7 @@ output:
 content:
   html_template: "./template.html"
   embed_images: false # Markdownモードでは常にfalse扱い（ファイル参照）となる
+  add_location_link: true # 位置情報がある場合、Google Mapsへのリンクを追加するか
 
 markdown:
   # MarkdownファイルにYAML Front Matter（メタデータ）を付与するか
@@ -123,7 +124,8 @@ logging:
 ### 5.3 ノートごとの処理ステップ
 
 #### Step 1: メタデータ抽出
-Title, Created Date, Updated Date, Tags, Author, Source URL 等を取得。
+Title, Created Date, Updated Date, Tags, Author, Source URL, **Location (Lat/Lon)** 等を取得。
+`<note-attributes>` 内の `latitude`, `longitude`, `altitude` を解析する。
 
 #### Step 1.5: 処理再開チェック (Resume)
 `_PDF` フォルダ内に該当ノートのPDF（フォルダ名にハッシュ接尾辞がある場合も考慮）が既に存在する場合、処理をスキップし、ログに "Skipping already processed" を出力する。

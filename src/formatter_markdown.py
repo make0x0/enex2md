@@ -23,8 +23,20 @@ class MarkdownFormatter:
             if note_data.get('source_url'):
                 front_matter['source_url'] = note_data.get('source_url')
                 
+            if note_data.get('location'):
+                front_matter['location'] = note_data.get('location')
+
             fm_str = yaml.dump(front_matter, allow_unicode=True, default_flow_style=False)
             markdown_text = f"---\n{fm_str}---\n\n{markdown_text}"
+            
+            # Add location link at the bottom if enabled
+            add_loc = self.config.get('content', {}).get('add_location_link', True)
+            loc = note_data.get('location', {})
+            if add_loc and loc.get('latitude') and loc.get('longitude'):
+                 lat = loc['latitude']
+                 lon = loc['longitude']
+                 map_url = f"https://www.google.com/maps/search/?api=1&query={lat},{lon}"
+                 markdown_text += f"\n\n---\n[📍 Location]({map_url})"
             
         output_path = target_dir / "content.md"
         with open(output_path, 'w', encoding='utf-8') as f:

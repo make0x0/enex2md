@@ -57,8 +57,20 @@ class HtmlFormatter:
                 url_p = soup.new_tag('p')
                 url_a = soup.new_tag('a', href=source_url)
                 url_a.string = "Source URL"
-                url_p.append(url_a)
                 meta_div.append(url_p)
+                
+            location = note_data.get('location', {})
+            add_loc = self.config.get('content', {}).get('add_location_link', True)
+            if add_loc and location.get('latitude') and location.get('longitude'):
+                lat = location['latitude']
+                lon = location['longitude']
+                loc_p = soup.new_tag('p')
+                # Google Maps link
+                map_url = f"https://www.google.com/maps/search/?api=1&query={lat},{lon}"
+                loc_a = soup.new_tag('a', href=map_url, target="_blank", rel="noopener noreferrer")
+                loc_a.string = f"📍 Location ({lat}, {lon})"
+                loc_p.append(loc_a)
+                meta_div.append(loc_p)
 
         # Update Heading
         h1 = soup.find('h1')

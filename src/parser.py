@@ -40,9 +40,18 @@ class NoteParser:
 
         # Handle attributes like source-url if needed (often in note-attributes)
         source_url = None
+        location = {}
         attr_elem = note_elem.find('note-attributes')
         if attr_elem is not None:
             source_url = attr_elem.findtext('source-url')
+            lat_str = attr_elem.findtext('latitude')
+            lon_str = attr_elem.findtext('longitude')
+            if lat_str and lon_str:
+                try:
+                    location['latitude'] = float(lat_str)
+                    location['longitude'] = float(lon_str)
+                except ValueError:
+                    pass
 
         return {
             'title': title,
@@ -51,7 +60,8 @@ class NoteParser:
             'updated': updated_dt,
             'tags': tags,
             'resources': resources,
-            'source_url': source_url
+            'source_url': source_url,
+            'location': location
         }
 
     def _extract_resource_data(self, res_elem):
