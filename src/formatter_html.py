@@ -120,10 +120,16 @@ class HtmlFormatter:
         # Better approach: Iterate img tags, get filename from src, find matching resource.
         # Img src is "note_contents/FILENAME"
         
+        # Handle resources as dict (keyed by MD5) or list
+        if isinstance(resources, dict):
+            resource_list = list(resources.values())
+        else:
+            resource_list = resources if resources else []
+        
         # Let's map filename -> resource
         filename_map = {}
-        for res in resources:
-            if not res.get('data_b64'): continue
+        for res in resource_list:
+            if not isinstance(res, dict) or not res.get('data_b64'): continue
             
             # Reconstruct filename logic from converter...
             # This is BAD duplication.
@@ -153,8 +159,8 @@ class HtmlFormatter:
         def sanitize(name):
              return re.sub(r'[<>:"/\\|?*]', sanitize_char, name).strip()
         
-        for res in resources:
-            if not res.get('data_b64'): continue
+        for res in resource_list:
+            if not isinstance(res, dict) or not res.get('data_b64'): continue
             
             try:
                 data = base64.b64decode(res['data_b64'])
