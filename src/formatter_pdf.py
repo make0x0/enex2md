@@ -72,7 +72,7 @@ class PdfFormatter(HtmlFormatter):
         pdf_style.string = """
             img {
                 max-width: 100%;
-                max-height: 90vh;  /* Leave margin for header/footer */
+                max-height: 250mm;  /* A4 page is 297mm, leave margin */
                 width: auto;
                 height: auto;
                 object-fit: contain;
