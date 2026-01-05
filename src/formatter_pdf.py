@@ -142,6 +142,20 @@ class PdfFormatter(HtmlFormatter):
                 color: black;
                 display: block;
             }
+            /* Other elements causing 'NoneType' color errors */
+            hr {
+                border: 1px solid black;
+                border-color: black;
+                color: black;
+            }
+            svg, path, circle, rect, line, polyline, polygon {
+                fill: black;
+                stroke: black;
+            }
+            /* Universal fallback for borders to prevent crashes on obscure elements */
+            * {
+                border-color: black;
+            }
         """
         if soup.head:
             soup.head.append(pdf_style)
@@ -150,36 +164,50 @@ class PdfFormatter(HtmlFormatter):
 
         # Fit Width Mode (Aggressive CSS)
         if self.config.get('pdf', {}).get('fit_mode', False):
-            logging.info(f"PDF Fit Width Mode: Enabled for '{title}' (Using Hybrid Scale Strategy)")
+            logging.info(f"PDF Fit Width Mode: Enabled for '{title}' (Using Font Scaling Strategy)")
             fit_style = soup.new_tag('style')
             fit_style.string = """
-                /* Hybrid Scale Strategy for Fit Width */
+                /* Font Scaling Strategy for Fit Width */
                 @page {
                     margin: 5mm;
                 }
                 
-                /* Keep main body normal scale for text/images */
                 body {
                     width: 100%;
                 }
                 
-                /* Shrink WIDE content (tables, pre) specifically */
-                table, pre, code {
-                    zoom: 0.65; /* Shrink to 65% */
-                    width: 153%; /* 100/0.65 ~ 153% to fill available space */
-                    max-width: 153%;
+                /* FIX HANGS: Allow breaking inside tables/rows to prevent infinite loops */
+                table, tr, td, th, tbody, thead, tfoot {
+                    page-break-inside: auto !important;
                 }
                 
-                /* Ensure images fit page but aren't shrunk if small */
+                /* Shrink tables by reducing font size vs zooming */
+                table {
+                    width: 100% !important;
+                    max-width: 100% !important;
+                    font-size: 75% !important; /* Reduce scale */
+                    border-collapse: collapse; /* Cleaner layout */
+                }
+                
+                /* Shrink pre/code similarly */
+                pre, code {
+                    font-size: 80% !important;
+                    white-space: pre-wrap !important;
+                    max-width: 100% !important;
+                }
+                
+                /* Images remain full size */
                 img, figure, video, canvas {
                     max-width: 100% !important;
                     height: auto !important;
-                    /* Don't zoom images, let them naturally fit max-width */
+                    width: auto !important;
                 }
                 
-                /* Fix table cells */
+                /* Layout preservation helpers */
                 td, th {
                     word-wrap: break-word;
+                    overflow-wrap: break-word;
+                    max-width: 50vw; /* Prevent single cell exploding width */
                 }
             """
             if soup.head:
