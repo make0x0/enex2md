@@ -7,3 +7,4 @@ pytesseract
 Pillow
 weasyprint
 reverse_geocoder
+rich

@@ -69,7 +69,40 @@ logging:
         f.write(default_config)
     print(f"Created {CONFIG_FILENAME}. You can now edit it and run the tool.")
 
-def process_enex(enex_path, config, converter, html_formatter, md_formatter=None, pdf_formatter=None):
+    # --- Rich Progress Implementation ---
+    from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeRemainingColumn
+    from rich.logging import RichHandler
+    from rich.console import Console
+    
+    console = Console()
+    
+    # 1. Setup Rich Logging
+    # Remove existing handlers if any (basicConfig might not have run yet if we override here, 
+    # but main() usually sets it up. We will override main's setup or modify main.)
+    # Actually, we should move basicConfig setup to here or rely on main passing us a configured logger?
+    # No, enex2all.py is a script. Let's modify main() primarily.
+    # This block is inside legacy process_enex which is not ideal for the "Global" progress bar user wants.
+    # We should refactor process_enex to accept a progress task.
+    
+    # ... Skipping partial refactor here. 
+    # I will replace the WHOLE content of main() and process_enex() and helper functions 
+    # to support the new architecture properly.
+    
+    # Let's count notes first (Helper function)
+    
+def count_notes_in_enex(enex_path):
+    """Fast scan to count <note> tags."""
+    count = 0
+    try:
+        with open(enex_path, 'rb') as f:
+            for line in f:
+                if b'<note>' in line: # Simple heuristic
+                    count += 1
+    except Exception as e:
+        logging.warning(f"Failed to count notes in {enex_path}: {e}")
+    return count
+
+def process_enex(enex_path, config, converter, html_formatter, md_formatter, pdf_formatter, progress=None, task_id=None):
     logging.info(f"Processing ENEX file: {enex_path}")
     
     from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -79,77 +112,56 @@ def process_enex(enex_path, config, converter, html_formatter, md_formatter=None
     skipped = 0
     errors = 0
     
-    # Get output root for checking existing PDFs
     base_output_root = Path(config.get('output', {}).get('root_dir', 'Converted_Notes'))
     enex_stem = Path(enex_path).stem
-    
-    # Number of parallel note workers (separate from OCR workers)
-    # NOTE: Values > 1 cause OCR failures due to thread safety issues. Keep at 1.
     note_workers = config.get('processing', {}).get('note_workers', 1)
     
     def process_single_note(note_data):
-        """Process a single note. Returns (success, skipped, title)"""
-        title = note_data.get('title', 'Untitled')
-        created = note_data.get('created')
-        
-        # Check if this note is already processed (PDF exists in _PDF folder)
-        date_str = created.strftime(converter.date_format) if created else "NoDate"
-        sanitized_title = converter._sanitize_filename(title)
-        dir_name = f"{date_str}_{sanitized_title}"
-        
-        # Check for PDF in _PDF folder (file name check with glob for potential hash suffixes or slight name changes)
-        # Note: In the new flat structure, PDFs are directly in _PDF/enex_stem/
-        pdf_base_path = base_output_root / "_PDF" / enex_stem
-        if pdf_base_path.exists():
-            # sanitized_title check might be tricky if it has special chars or if sanitizer changed
-            # But we can try to match the prefix.
-            # The PDF filename is sanitize_filename(title).pdf
-            # Let's just check if a file starting with sanitied title exists.
-            
-            # Sanitizer logic is in converter.py. Let's assume it's consistent.
-            # Filename format could be:
-            # 1. {sanitized_title}.pdf (Old)
-            # 2. {date}_{sanitized_title}.pdf (New)
-            
-            pdf_filename = f"{sanitized_title}.pdf"
-            potential_pdf = pdf_base_path / pdf_filename
-            
-            # Check for date-prefixed file
-            prefixed_pdf_filename = f"{date_str}_{sanitized_title}.pdf"
-            potential_prefixed_pdf = pdf_base_path / prefixed_pdf_filename
-            
-            if potential_pdf.exists() or potential_prefixed_pdf.exists():
-                 logging.debug(f"Skipping already processed: {title}")
-                 return (False, True, title)  # Not converted, but skipped
-        
         try:
+            nonlocal count, skipped, errors
+            title = note_data.get('title', 'Untitled')
+            created = note_data.get('created')
+            
+            # --- Check Resume (Reuse Logic) ---
+            date_str = created.strftime(converter.date_format) if created else "NoDate"
+            sanitized_title = converter._sanitize_filename(title)
+            
+            pdf_base_path = base_output_root / "_PDF" / enex_stem
+            if pdf_base_path.exists():
+                pdf_filename = f"{sanitized_title}.pdf"
+                potential_pdf = pdf_base_path / pdf_filename
+                prefixed_pdf_filename = f"{date_str}_{sanitized_title}.pdf"
+                potential_prefixed_pdf = pdf_base_path / prefixed_pdf_filename
+                
+                if potential_pdf.exists() or potential_prefixed_pdf.exists():
+                     # logging.debug(f"Skipping already processed: {title}")
+                     return (False, True, title)
+
+            # --- Conversion ---
             import threading
             worker_id = threading.current_thread().name.split('_')[-1]
             target_dir, intermediate_html, title, created, full_data = converter.convert_note(note_data)
-            logging.info(f"[Note-W{worker_id}] Processing: {title} -> {target_dir}")
+            logging.info(f"[Note-W{worker_id}] Processing: {title}")
             
-            # Generate HTML
             if 'html' in config['output']['formats']:
                 html_formatter.generate(target_dir, intermediate_html, title, full_data)
             
-            # Generate Markdown
             if md_formatter:
                 md_formatter.generate(target_dir, intermediate_html, title, full_data)
                 
-            # Generate PDF
             if pdf_formatter:
                 pdf_formatter.generate(target_dir, intermediate_html, title, full_data)
                 
-            return (True, False, title)  # Converted successfully
+            return (True, False, title)
+            
         except Exception as e:
-            logging.error(f"Error converting note '{title}': {e}", exc_info=True)
-            return (False, False, title)  # Error
-    
-    # Collect all notes first (needed for parallel processing)
+            logging.error(f"Error converting note '{title}': {e}", exc_info=False) # Reduce noise
+            return (False, False, title)
+
+    # Collect notes
     notes = list(parser.parse())
-    logging.info(f"Found {len(notes)} notes in {enex_path}")
+    # logging.info(f"Found {len(notes)} notes in {enex_path}") # Duplicate with progress bar info
     
-    # Process notes in parallel
     with ThreadPoolExecutor(max_workers=note_workers) as executor:
         futures = {executor.submit(process_single_note, note): note for note in notes}
         
@@ -161,11 +173,12 @@ def process_enex(enex_path, config, converter, html_formatter, md_formatter=None
                 skipped += 1
             else:
                 errors += 1
-    
-    if skipped > 0 or errors > 0:
-        logging.info(f"Finished {enex_path}: {count} converted, {skipped} skipped, {errors} errors.")
-    else:
-        logging.info(f"Finished {enex_path}: {count} notes converted.")
+            
+            # Update Progress
+            if progress and task_id is not None:
+                progress.advance(task_id)
+
+    logging.info(f"Finished {enex_path}: {count} converted, {skipped} skipped, {errors} errors.")
 
 def main():
     parser = argparse.ArgumentParser(description="Convert Evernote .enex files to HTML/Markdown.")
@@ -185,7 +198,7 @@ def main():
     # Load Config
     config = load_config(CONFIG_FILENAME)
     
-    # Merge CLI args into config (simplified merging logic)
+    # Merge CLI args
     if args.output:
         if 'output' not in config: config['output'] = {}
         config['output']['root_dir'] = args.output
@@ -194,52 +207,57 @@ def main():
         if 'output' not in config: config['output'] = {}
         config['output']['formats'] = args.format.split(',')
 
-    # Determine paths to process
+    # Paths
     target_path = args.path or config.get('input', {}).get('default_path', '.')
     recursive = args.recursive or config.get('input', {}).get('default_recursive', False)
-
-    # Determine Output directory base for logging
     base_output_root = config.get('output', {}).get('root_dir', 'Converted_Notes')
     
-    # Ensure base output dir exists for log file
     try:
         os.makedirs(base_output_root, exist_ok=True)
     except Exception as e:
-        print(f"Warning: Could not create output directory for logging: {e}")
+        print(f"Warning: Could not create output directory: {e}")
 
     log_file_path = os.path.join(base_output_root, "enex2md.log")
 
-    # Setup Logging
+    # --- Rich Setup ---
+    from rich.logging import RichHandler
+    from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeRemainingColumn, MofNCompleteColumn
+    from rich.console import Console
+    
+    console = Console()
+    
+    # Configure root logger to file AND RichHandler (console)
     log_level = config.get('logging', {}).get('level', 'INFO')
     
+    # File Handler (Full logs)
+    file_handler = logging.FileHandler(log_file_path, encoding='utf-8')
+    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+    
+    # Rich Handler (Console logs, pretty)
+    rich_handler = RichHandler(console=console, show_time=False, show_path=False)
+    
     logging.basicConfig(
-        level=getattr(logging, log_level.upper()), 
-        format='%(asctime)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.FileHandler(log_file_path, encoding='utf-8'),
-            logging.StreamHandler(sys.stdout)
-        ]
+        level=getattr(logging, log_level.upper()),
+        handlers=[file_handler, rich_handler],
+        force=True # Override any previous config
     )
     
     # Suppress noisy third-party loggers
     logging.getLogger('weasyprint').setLevel(logging.ERROR)
     logging.getLogger('fontTools').setLevel(logging.ERROR)
-    logging.getLogger('fontTools.subset').setLevel(logging.ERROR)
     
-    logging.info(f"Starting conversion. Target: {target_path}, Recursive: {recursive}")
-    logging.info(f"Logging to file: {log_file_path}")
+    logging.info(f"Starting conversion. Target: {target_path}")
     
-    # Check if target exists
+    # Check target
     if not os.path.exists(target_path):
         logging.error(f"Path not found: {target_path}")
         sys.exit(1)
 
-    # Collect files
+    # Collect .enex files
     enex_files = []
     path_obj = Path(target_path)
-    if path_obj.is_file():
-        if path_obj.suffix.lower() == '.enex':
-            enex_files.append(path_obj)
+    if path_obj.is_file() and path_obj.suffix.lower() == '.enex':
+        enex_files.append(path_obj)
     elif path_obj.is_dir():
         pattern = '**/*.enex' if recursive else '*.enex'
         enex_files = list(path_obj.glob(pattern))
@@ -248,31 +266,54 @@ def main():
         logging.warning("No .enex files found.")
         sys.exit(0)
 
-    logging.info(f"Found {len(enex_files)} .enex files.")
+    # --- Pre-scan count ---
+    with console.status("[bold green]Scanning files to count notes...") as status:
+        total_notes = 0
+        enex_counts = {}
+        for i, ef in enumerate(enex_files, 1):
+            status.update(f"[bold green]Scanning file {i}/{len(enex_files)}: {ef.name} (Found {total_notes} notes so far)...")
+            c = count_notes_in_enex(ef)
+            enex_counts[ef] = c
+            total_notes += c
+        console.print(f"[bold]Found {len(enex_files)} files with {total_notes} total notes.[/bold]")
 
     # Initialize formatters
     html_formatter = HtmlFormatter(config)
-    
     md_formatter = None
     if 'markdown' in config.get('output', {}).get('formats', []):
         md_formatter = MarkdownFormatter(config)
-        
     pdf_formatter = None
     if 'pdf' in config.get('output', {}).get('formats', []):
         try:
             from src.formatter_pdf import PdfFormatter
             pdf_formatter = PdfFormatter(config)
         except ImportError:
-            logging.error("Failed to import PdfFormatter. Check dependencies.")
+            logging.error("Failed to import PdfFormatter.")
 
-    for enex_file in enex_files:
-        # Create a subfolder for this ENEX file
-        enex_stem = Path(enex_file).stem
-        output_root_for_enex = Path(base_output_root) / enex_stem
+    # --- Main Process Loop with Progress Bar ---
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        TimeRemainingColumn(),
+        console=console,
+        transient=False  # Keep bar after completion
+    ) as progress:
         
-        converter = NoteConverter(output_root_for_enex, config)
+        main_task = progress.add_task("[green]Total Progress", total=total_notes)
         
-        process_enex(enex_file, config, converter, html_formatter, md_formatter, pdf_formatter)
+        for enex_file in enex_files:
+            # Create a subfolder for this ENEX file
+            enex_stem = Path(enex_file).stem
+            output_root_for_enex = Path(base_output_root) / enex_stem
+            
+            converter = NoteConverter(output_root_for_enex, config)
+            
+            # Pass progress and task to process_enex
+            # Note: process_enex logic is now simplified above
+            process_enex(enex_file, config, converter, html_formatter, md_formatter, pdf_formatter, progress, main_task)
 
 if __name__ == "__main__":
     main()
