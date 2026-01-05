@@ -116,7 +116,12 @@ class PdfFormatter(HtmlFormatter):
                 max-width: 100%;
                 max-height: 270mm;  /* A4 is 297mm, minus margins */
                 display: block;
+                display: block;
                 margin: 0 auto;
+            }
+            a {
+                color: blue;
+                text-decoration: underline;
             }
             .note-content {
                 page-break-before: avoid;
