@@ -282,9 +282,13 @@ class PdfFormatter(HtmlFormatter):
             filename = pdf_path.name
             if note_data:
                 created = note_data.get('created')
+                date_part = ""
                 # created is usually "YYYY-MM-DD HH:MM:SS" or similar
                 # We want "YYYY-MM-DD_" prefix
-                if not filename.startswith(date_part):
+                if created:
+                    date_part = str(created).split(' ')[0]
+                
+                if date_part and not filename.startswith(date_part):
                         filename = f"{date_part}_{filename}"
 
             # Copy the PDF
