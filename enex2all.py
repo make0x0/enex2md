@@ -77,7 +77,8 @@ def process_enex(enex_path, config, converter, html_formatter, md_formatter=None
     enex_stem = Path(enex_path).stem
     
     # Number of parallel note workers (separate from OCR workers)
-    note_workers = config.get('processing', {}).get('note_workers', 2)
+    # NOTE: Values > 1 cause OCR failures due to thread safety issues. Keep at 1.
+    note_workers = config.get('processing', {}).get('note_workers', 1)
     
     def process_single_note(note_data):
         """Process a single note. Returns (success, skipped, title)"""

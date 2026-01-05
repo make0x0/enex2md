@@ -140,14 +140,13 @@ ocr:
 
 ### 並列処理設定
 
-大量のノートを高速に処理するための設定です。
-
 ```yaml
 processing:
-  note_workers: 2    # ノート並列処理のワーカー数
+  note_workers: 1    # ノート並列処理のワーカー数 (⚠️ 1のまま使用してください)
 ```
 
-**注意**: `note_workers × ocr.workers` がCPUコア数を超えないようにしてください。
+> [!CAUTION]
+> `note_workers` を2以上に設定すると、WeasyPrintのスレッドセーフティ問題によりOCRが失敗することがあります。**1のまま使用してください。** OCR並列処理（`ocr.workers`）は問題なく動作します。
 
 ### ログ設定
 
