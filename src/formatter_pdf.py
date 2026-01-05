@@ -179,10 +179,11 @@ class PdfFormatter(HtmlFormatter):
         # Generate PDF
         html_str = str(soup)
         
-        # Fix base URL for WeasyPrint if we didn't embed everything? 
-        # But we embedded images. 
-        
-        HTML(string=html_str, base_url=str(target_dir)).write_pdf(output_path)
+        # presentational_hints=True enables background colors and other HTML presentation styles
+        HTML(string=html_str, base_url=str(target_dir)).write_pdf(
+            output_path,
+            presentational_hints=True
+        )
         
         # Copy PDF to _PDF folder (maintains directory structure)
         self._copy_to_pdf_folder(output_path, target_dir)
