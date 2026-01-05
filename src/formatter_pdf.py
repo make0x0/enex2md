@@ -75,11 +75,18 @@ class PdfFormatter(HtmlFormatter):
                 size: A4;
                 margin: 10mm;
             }
+            h1 {
+                page-break-after: avoid;
+                margin-bottom: 5mm;
+            }
             img {
                 max-width: 100%;
                 max-height: 270mm;  /* A4 is 297mm, minus margins */
                 display: block;
                 margin: 0 auto;
+            }
+            .note-content {
+                page-break-before: avoid;
             }
             .note-content img {
                 page-break-inside: avoid;
