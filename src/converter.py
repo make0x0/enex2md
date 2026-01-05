@@ -167,6 +167,7 @@ class NoteConverter:
         import io
         import json
         import xml.sax.saxutils
+        import threading
         
         lang = self.config.get('ocr', {}).get('language', 'jpn')
         image = Image.open(io.BytesIO(data))
@@ -213,7 +214,8 @@ class NoteConverter:
             with open(pos_path, 'w', encoding='utf-8') as f:
                 json.dump(ocr_position_data, f, ensure_ascii=False)
             
-            logging.info(f"   - OCR Performed on '{filename}' ({len(words_with_positions)} words)")
+            worker_id = threading.current_thread().name.split('_')[-1]
+            logging.info(f"   - [Ocr-W{worker_id}] OCR: '{filename}' ({len(words_with_positions)} words)")
         
         return recognition, ocr_position_data
 

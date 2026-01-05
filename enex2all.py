@@ -102,7 +102,10 @@ def process_enex(enex_path, config, converter, html_formatter, md_formatter=None
                         return (False, True, title)  # Not converted, but skipped
         
         try:
+            import threading
+            worker_id = threading.current_thread().name.split('_')[-1]
             target_dir, intermediate_html, title, created, full_data = converter.convert_note(note_data)
+            logging.info(f"[Note-W{worker_id}] Processing: {title} -> {target_dir}")
             
             # Generate HTML
             if 'html' in config['output']['formats']:
