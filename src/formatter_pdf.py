@@ -142,23 +142,32 @@ class PdfFormatter(HtmlFormatter):
             logging.info(f"PDF Fit Width Mode: Enabled for '{title}'")
             fit_style = soup.new_tag('style')
             fit_style.string = """
-                table, pre, code, img, figure, blockquote {
+                /* Safer Fit Width Mode */
+                
+                /* Constrain Max Width but DON'T Force Width */
+                img, figure, video, canvas {
                     max-width: 100% !important;
-                    width: 100% !important;
+                    height: auto !important;
                     box-sizing: border-box !important;
-                    white-space: pre-wrap !important; /* Force wrapping for pre */
-                    word-wrap: break-word !important; /* Break long words */
-                    overflow-wrap: break-word !important;
-                    table-layout: fixed !important; /* Force table to respect width */
                 }
-                /* Ensure images don't stretch if they are small */
-                img {
-                    width: auto !important; 
+                
+                /* Wrap text to prevent overflow, but be careful with pre */
+                body {
+                    overflow-wrap: break-word !important; 
+                    word-wrap: break-word !important;
+                }
+                
+                /* Pre/Code: Force wrap to prevent horizontal scroll need */
+                pre, code {
+                    white-space: pre-wrap !important; 
                     max-width: 100% !important;
                 }
-                /* But if we really want to fit wide tables, we might need smaller font */
+                
+                /* Table: Allow shrink if possible, but don't break layout */
                 table {
-                    font-size: 80%; 
+                    max-width: 100% !important;
+                    /* table-layout: fixed; <--- REMOVED: Destroys layout tables */
+                    /* width: 100%; <--- REMOVED: Forces expansion to page width */
                 }
             """
             if soup.head:
