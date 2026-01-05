@@ -7,9 +7,10 @@ import shutil
 from pathlib import Path
 
 # Suppress noisy third-party loggers BEFORE they are imported
-logging.getLogger('weasyprint').setLevel(logging.ERROR)
-logging.getLogger('fontTools').setLevel(logging.ERROR)
-logging.getLogger('fontTools.subset').setLevel(logging.ERROR)
+for logger_name in ['weasyprint', 'fontTools', 'fontTools.subset', 'fontTools.ttLib', 'fontTools.ttLib.ttFont']:
+    logger = logging.getLogger(logger_name)
+    logger.setLevel(logging.ERROR)
+    logger.propagate = False
 
 from src.parser import NoteParser
 from src.converter import NoteConverter
@@ -82,13 +83,23 @@ def process_enex(enex_path, config, converter, html_formatter, md_formatter=None
             sanitized_title = converter._sanitize_filename(title)
             dir_name = f"{date_str}_{sanitized_title}"
             
-            # Check for PDF in _PDF folder
-            pdf_check_path = base_output_root / "_PDF" / enex_stem / dir_name
-            if pdf_check_path.exists():
-                existing_pdfs = list(pdf_check_path.glob("*.pdf"))
-                if existing_pdfs:
-                    logging.debug(f"Skipping already processed: {title}")
-                    skipped += 1
+            # Check for PDF in _PDF folder (with or without hash suffix)
+            pdf_base_path = base_output_root / "_PDF" / enex_stem
+            if pdf_base_path.exists():
+                # Match folders with pattern: dir_name or dir_name_xxxx (hash suffix)
+                matching_folders = list(pdf_base_path.glob(f"{dir_name}*"))
+                for folder in matching_folders:
+                    if folder.is_dir():
+                        existing_pdfs = list(folder.glob("*.pdf"))
+                        if existing_pdfs:
+                            logging.debug(f"Skipping already processed: {title}")
+                            skipped += 1
+                            break
+                else:
+                    # No matching folder with PDF found, continue processing
+                    pass
+                if skipped > 0 and matching_folders:
+                    # If we incremented skipped in the loop, skip this note
                     continue
             
             target_dir, intermediate_html, title, created, full_data = converter.convert_note(note_data)
