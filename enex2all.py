@@ -444,13 +444,21 @@ def main():
         
         main_task = progress.add_task(f"[green]Total Progress (Notebook 0/{len(enex_files)})", total=total_notes)
         
+        target_root_dir = Path(target_path) if Path(target_path).is_dir() else Path(target_path).parent
+
         for i, enex_file in enumerate(enex_files, 1):
             # Update description with current file index
             progress.update(main_task, description=f"[green]Total Progress (Notebook {i}/{len(enex_files)})")
             
-            # Create a subfolder for this ENEX file
+            # Create a subfolder for this ENEX file, preserving directory structure if recursive
             enex_stem = Path(enex_file).stem
-            output_root_for_enex = Path(base_output_root) / enex_stem
+            try:
+                # Calculate relative path from input root
+                rel_path = enex_file.parent.relative_to(target_root_dir)
+            except ValueError:
+                rel_path = Path(".")
+            
+            output_root_for_enex = Path(base_output_root) / rel_path / enex_stem
             
             converter = NoteConverter(output_root_for_enex, config)
             

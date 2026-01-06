@@ -65,8 +65,13 @@ class NoteConverter:
         return target_dir, intermediate_html, title, created, note_data
 
     def _sanitize_filename(self, name):
-        """Sanitize string to be safe for filenames."""
-        return re.sub(r'[<>:"/\\|?*]', self.sanitize_char, name).strip()
+        """Sanitize string to be safe for filenames and limit length."""
+        sanitized = re.sub(r'[<>:"/\\|?*]', self.sanitize_char, name).strip()
+        # Limit length to avoid "File name too long" (255 is mostly limit, but keep safe margin)
+        # Using 100 chars to leave room for timestamp prefixes and extensions
+        if len(sanitized) > 100:
+            sanitized = sanitized[:100].strip()
+        return sanitized
 
     def _process_resources_parallel(self, resources, target_dir, seen_filenames):
         """Process resources with parallel OCR."""
@@ -141,6 +146,18 @@ class NoteConverter:
                 logging.error(f"Error processing resource: {e}")
         
         # Second pass: Parallel OCR processing
+        if ocr_tasks:
+            # Filter out SVGs just in case logic above missed it or mime was wrong
+            valid_tasks = []
+            for task in ocr_tasks:
+                md5_hash, data, filename, file_path = task
+                if filename.lower().endswith('.svg'):
+                    logging.warning(f"   - Skipping OCR for SVG: {filename}")
+                    continue
+                valid_tasks.append(task)
+            
+            ocr_tasks = valid_tasks
+            
         if ocr_tasks:
             logging.info(f"   - Running OCR on {len(ocr_tasks)} images with {self.ocr_workers} workers...")
             with ThreadPoolExecutor(max_workers=self.ocr_workers) as executor:
@@ -253,7 +270,10 @@ class NoteConverter:
                 # Check config for embed
                 embed_images = self.config.get('content', {}).get('embed_images', False)
                 mime = res.get('mime', '')
+                # Specifically exclude SVG from being treated as standard image for OCR/Embed logic if needed
+                # But HTML <img> works for SVG. We mostly care about OCR skipping.
                 is_image = mime.startswith('image/')
+                is_svg = 'svg' in mime or (res.get('filename') and res.get('filename').lower().endswith('.svg'))
                 
                 should_save = True
                 if embed_images and is_image:
@@ -273,7 +293,8 @@ class NoteConverter:
                 image_dimensions = None   # New: Store image size for positioning
                 
                 ocr_enabled = self.config.get('ocr', {}).get('enabled', False)
-                if not recognition and ocr_enabled and is_image:
+                # Skip OCR for SVG
+                if not recognition and ocr_enabled and is_image and not is_svg:
                      try:
                          import pytesseract
                          from PIL import Image
@@ -292,16 +313,20 @@ class NoteConverter:
                          words_with_positions = []
                          for i in range(len(ocr_data['text'])):
                              text = ocr_data['text'][i].strip()
-                             conf = ocr_data['conf'][i]
-                             if text and conf > 0:  # Filter empty and low-confidence
-                                 words_with_positions.append({
-                                     'text': text,
-                                     'left': ocr_data['left'][i],
-                                     'top': ocr_data['top'][i],
-                                     'width': ocr_data['width'][i],
-                                     'height': ocr_data['height'][i],
-                                     'conf': conf
-                                 })
+                             # Safety check for lists
+                             try:
+                                 conf = ocr_data['conf'][i]
+                                 if text and int(float(conf)) > 0:  # Filter empty and low-confidence
+                                     words_with_positions.append({
+                                         'text': text,
+                                         'left': ocr_data['left'][i],
+                                         'top': ocr_data['top'][i],
+                                         'width': ocr_data['width'][i],
+                                         'height': ocr_data['height'][i],
+                                         'conf': conf
+                                     })
+                             except (IndexError, ValueError):
+                                 continue
                          
                          if words_with_positions:
                              # Store as JSON for position-aware rendering
