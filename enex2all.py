@@ -347,6 +347,9 @@ def main():
         config['pdf']['fit_mode'] = True
 
     base_output_root = config.get('output', {}).get('root_dir', 'Converted_Notes')
+    # Sync authoritative root path back to config for formatters
+    if 'output' not in config: config['output'] = {}
+    config['output']['root_dir'] = str(base_output_root)
     
     try:
         os.makedirs(base_output_root, exist_ok=True)

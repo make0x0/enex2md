@@ -253,12 +253,23 @@ class PdfFormatter(HtmlFormatter):
     def _copy_to_pdf_folder(self, pdf_path, target_dir, note_data=None, exclude_filenames=None):
         """Copy the generated PDF to a _PDF folder, maintaining hierarchy."""
         try:
-            note_folder = target_dir.name
-            enex_folder = target_dir.parent.name
-            output_root = target_dir.parent.parent
-            
-            # Create _PDF folder structure (output_root / _PDF / enex_folder)
-            pdf_dest_dir = output_root / "_PDF" / enex_folder
+            # Determine Global Output Root
+            root_dir_str = self.config.get('output', {}).get('root_dir')
+            if root_dir_str:
+                root_dir = Path(root_dir_str)
+                try:
+                    # Calculate relative path from root to the ENEX folder
+                    # target_dir.parent is the ENEX folder (e.g. /output/subdir/enexname)
+                    rel_path = target_dir.parent.relative_to(root_dir)
+                except ValueError:
+                    # Fallback if paths mismatch
+                    rel_path = Path(target_dir.parent.name)
+                
+                pdf_dest_dir = root_dir / "_PDF" / rel_path
+            else:
+                # Fallback legacy behavior
+                pdf_dest_dir = target_dir.parent.parent / "_PDF" / target_dir.parent.name
+
             pdf_dest_dir.mkdir(parents=True, exist_ok=True)
             
             # Prefix filename with date if available
