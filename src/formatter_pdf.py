@@ -5,36 +5,72 @@ import re
 import os
 import mimetypes
 import shutil
+import tempfile
 from pathlib import Path
 from bs4 import BeautifulSoup
 from src.formatter_html import HtmlFormatter
+
+# Playwright sync API
+from playwright.sync_api import sync_playwright
 
 class PdfFormatter(HtmlFormatter):
     def __init__(self, config):
         super().__init__(config)
         self.config = config
+        self.playwright = None
+        self.browser = None
+        self._browser_initialized = False
+
+    def _ensure_browser(self):
+        """Lazy initialization of the Playwright browser."""
+        if not self._browser_initialized:
+            try:
+                logging.info("Initializing Playwright (Chromium)...")
+                self.playwright = sync_playwright().start()
+                # Run headless. Increase timeout if needed.
+                self.browser = self.playwright.chromium.launch(headless=True)
+                self._browser_initialized = True
+            except Exception as e:
+                logging.error(f"Failed to initialize Playwright: {e}")
+                self._browser_initialized = False
+                # Cleanup if partially initialized
+                self.close_browser()
+
+    def close_browser(self):
+        """Close browser and stop Playwright."""
+        if self.browser:
+            try:
+                self.browser.close()
+            except: pass
+            self.browser = None
+        
+        if self.playwright:
+            try:
+                self.playwright.stop()
+            except: pass
+            self.playwright = None
+        
+        self._browser_initialized = False
+
+    def __del__(self):
+        """Destructor to ensure cleanup."""
+        self.close_browser()
 
     def generate(self, target_dir, intermediate_html, title, note_data):
-        """Generates a PDF file from the note content."""
-        try:
-            from weasyprint import HTML, CSS
-        except ImportError:
-            logging.error("WeasyPrint not found. Please install PDF support dependencies.")
+        """Generates a PDF file from the note content using Playwright."""
+        self._ensure_browser()
+        if not self.browser:
+            logging.error("Browser not available. Skipping PDF generation.")
             return None
 
-        # Reuse HtmlFormatter logic to prepare the full HTML structure
-        # We need the HTML string, but HtmlFormatter.generate writes to file.
-        # Let's duplicate the relevant construction logic here or refactor HtmlFormatter later.
-        # For now, to avoid breaking HtmlFormatter, I'll copy the construction logic logic (mostly).
-        
-        # Parse template
+        # Prepare HTML soup (Same logic as before, reusing HtmlFormatter logic partially)
         soup = BeautifulSoup(self.template, 'html.parser')
         
         # Set Title
         if soup.title:
             soup.title.string = title
         
-        # Insert Meta (Simplified for PDF)
+        # Insert Meta
         meta_div = soup.find('div', class_='note-meta')
         if meta_div:
             meta_div.clear()
@@ -57,34 +93,30 @@ class PdfFormatter(HtmlFormatter):
             source_url = note_data.get('source_url')
             if source_url:
                 url_p = soup.new_tag('p')
-                url_a = soup.new_tag('a', href=source_url)
+                url_a = soup.new_tag('a', href=source_url, target="_blank")
                 url_a.string = f"Source URL: {source_url}"
                 url_p.append(url_a)
                 meta_div.append(url_p)
-                
+
+            # Location (Optional)
             location = note_data.get('location', {})
             add_loc = self.config.get('content', {}).get('add_location_link', True)
             if add_loc and location.get('latitude') and location.get('longitude'):
                 lat = location['latitude']
                 lon = location['longitude']
-                
-                # Reverse Geoding (Offline)
+                # Offline Reverse Geocoding
                 loc_name = ""
                 try:
                     import reverse_geocoder as rg
-                    # rg.search returns a list of dicts, we take the first one
                     results = rg.search((lat, lon))
                     if results:
                         r = results[0]
                         loc_name = f"{r.get('name', '')}, {r.get('cc', '')}"
-                except ImportError:
-                    pass
-                except Exception as e:
-                    logging.warning(f"Reverse geocoding failed: {e}")
+                except: pass
                 
                 loc_p = soup.new_tag('p')
                 map_url = f"https://www.google.com/maps/search/?api=1&query={lat},{lon}"
-                loc_a = soup.new_tag('a', href=map_url)
+                loc_a = soup.new_tag('a', href=map_url, target="_blank")
                 display_text = f"📍 Location: {loc_name} ({lat:.4f}, {lon:.4f})" if loc_name else f"📍 Location ({lat:.4f}, {lon:.4f})"
                 loc_a.string = display_text
                 loc_p.append(loc_a)
@@ -94,328 +126,136 @@ class PdfFormatter(HtmlFormatter):
         h1 = soup.find('h1')
         if h1:
             h1.string = title
-        
-        # Remove scripts for PDF (WeasyPrint doesn't run JS)
-        if soup.body:
-             for s in soup.body.find_all('script'):
-                 s.decompose()
 
-        # Add PDF-specific CSS for image sizing
-        # Ensures tall images (like receipts) fit within page bounds
-        # WeasyPrint doesn't fully support object-fit, so use simpler constraints
+        # CSS - Chromium rendering is good, but we can add some print styles
         pdf_style = soup.new_tag('style')
         pdf_style.string = """
-            @page {
-                size: A4;
-                margin: 10mm;
+            @page { margin: 20mm; }
+            body { 
+                font-family: "Noto Sans CJK JP", "Meiryo", sans-serif;
+                line-height: 1.6;
+                color: #333;
+                width: 100%;
+                margin: 0;
             }
-            h1 {
-                page-break-after: avoid;
-                margin-bottom: 5mm;
-            }
-            img {
-                max-width: 100%;
-                max-height: 270mm;  /* A4 is 297mm, minus margins */
-                display: block;
-                display: block;
-                margin: 0 auto;
-            }
-            a {
-                color: blue;
-                text-decoration: underline;
-            }
-            .note-content {
-                page-break-before: avoid;
-            }
-            .note-content img {
-                page-break-inside: avoid;
-                page-break-before: auto;
-            }
-            /* Robust fallbacks for form elements that might lack default styles */
-            input, button, select, textarea, fieldset, legend, optgroup, option {
-                color: black;
-                border: 1px solid gray;
-                background-color: white;
-            }
-            /* Interactive elements that might be missing styles */
-            details, summary {
-                color: black;
-                display: block;
-            }
-            /* Other elements causing 'NoneType' color errors */
-            hr {
-                border: 1px solid black;
-                border-color: black;
-                color: black;
-            }
-            svg, path, circle, rect, line, polyline, polygon {
-                fill: black;
-                stroke: black;
-            }
-            /* Avoid global wildcards as they cause layout freeze */
-            /* Ensure tables don't get stuck in infinite loops due to fixed heights */
-            tr, td, th {
-                height: auto !important;
-            }
+            img { max-width: 100%; height: auto; display: block; margin: 10px auto; }
+            table { width: 100%; border-collapse: collapse; margin-bottom: 1em; }
+            th, td { border: 1px solid #ddd; padding: 8px; text-align: left; vertical-align: top; }
+            th { background-color: #f5f5f5; }
+            pre { background: #f8f8f8; padding: 10px; overflow-x: auto; white-space: pre-wrap; word-wrap: break-word; }
+            a { color: #0066cc; text-decoration: none; }
             
-            /* Universal Safetynet for NoneType Color Crash */
-            /* Using transparent ensures a valid color tuple exists without drawing unwanted borders */
-            * {
-                border-color: transparent;
-                outline-color: transparent;
-                text-decoration-color: black; /* Text decoration usually needs to be visible if present */
-                column-rule-color: transparent; 
-                -webkit-text-emphasis-color: transparent;
-            }
-            
-            /* Restore visibility for standard bordered elements */
-            input, button, select, textarea, fieldset, legend, hr, table, th, td {
-                border-color: gray; 
+            /* Print specific adjustments */
+            @media print {
+                a { text-decoration: underline; }
+                .no-print { display: none; }
+                h1, h2, h3 { page-break-after: avoid; }
+                img, table, pre { page-break-inside: avoid; }
             }
         """
         if soup.head:
             soup.head.append(pdf_style)
         elif soup.body:
-            soup.body.insert(0, pdf_style)
+             soup.body.insert(0, pdf_style)
 
-        # Fit Width Mode (Aggressive CSS)
-        if self.config.get('pdf', {}).get('fit_mode', False):
-            logging.info(f"PDF Fit Width Mode: Enabled for '{title}' (Using Font Scaling Strategy)")
-            fit_style = soup.new_tag('style')
-            fit_style.string = """
-                /* Font Scaling Strategy for Fit Width */
-                @page {
-                    margin: 5mm;
-                }
-                
-                body {
-                    width: 100%;
-                }
-                
-                /* FIX HANGS: Allow breaking inside tables/rows to prevent infinite loops */
-                table, tr, td, th, tbody, thead, tfoot {
-                    page-break-inside: auto !important;
-                }
-                
-                /* Shrink tables by reducing font size vs zooming */
-                table {
-                    width: 100% !important;
-                    max-width: 100% !important;
-                    font-size: 75% !important; /* Reduce scale */
-                    border-collapse: collapse; /* Cleaner layout */
-                }
-                
-                /* Shrink pre/code similarly */
-                pre, code {
-                    font-size: 80% !important;
-                    white-space: pre-wrap !important;
-                    max-width: 100% !important;
-                }
-                
-                /* Images remain full size */
-                img, figure, video, canvas {
-                    max-width: 100% !important;
-                    height: auto !important;
-                    width: auto !important;
-                }
-                
-                /* Layout preservation helpers */
-                td, th {
-                    word-wrap: break-word;
-                    overflow-wrap: break-word;
-                    max-width: 50vw; /* Prevent single cell exploding width */
-                }
-            """
-            if soup.head:
-                soup.head.append(fit_style)
-            elif soup.body:
-                soup.body.insert(0, fit_style)
+        # Smart PDF Mode Check
+        # If the note contains ONLY one PDF attachment (and minimal text), copy original PDF.
+        resources = note_data.get('resources', [])
+        # Resources can be list or dict
+        resources_list = list(resources.values()) if isinstance(resources, dict) else resources
+
+        pdf_resources = [r for r in resources_list if isinstance(r, dict) and r.get('mime') == 'application/pdf']
+        
+        # Check text length
+        soup_body_text = BeautifulSoup(intermediate_html, 'html.parser').get_text().strip()
+        is_minimal_text = len(soup_body_text) < 100
+
+        if len(pdf_resources) == 1 and is_minimal_text:
+             pdf_res = pdf_resources[0]
+             # Search for the PDF file in note_contents
+             note_contents_dir = target_dir / "note_contents"
+             if note_contents_dir.exists():
+                 pdf_files = list(note_contents_dir.glob("*.pdf"))
+                 # We try to match by filename if possible, or just grab the only one
+                 target_filename = pdf_res.get('filename')
+                 candidate = None
+                 if target_filename and (note_contents_dir / target_filename).exists():
+                     candidate = note_contents_dir / target_filename
+                 elif len(pdf_files) == 1:
+                     candidate = pdf_files[0]
+                 
+                 if candidate:
+                     output_filename = f"{self._sanitize_filename(title)}.pdf"
+                     output_path = target_dir / output_filename
+                     shutil.copy2(candidate, output_path)
+                     
+                     # Timestamp
+                     ts_date = note_data.get('updated') or note_data.get('created')
+                     if ts_date:
+                         try:
+                             ts_timestamp = ts_date.timestamp()
+                             os.utime(output_path, (ts_timestamp, ts_timestamp))
+                         except: pass
+                     
+                     logging.info(f"Smart PDF Mode: Copied original PDF for '{title}'")
+                     self._copy_to_pdf_folder(output_path, target_dir, note_data, exclude_filenames={candidate.name})
+                     return output_path
 
         # Insert Content
         content_div = soup.find('div', class_='note-content')
         if not content_div:
-            content_div = soup.find(id='note-content')
-        
+             content_div = soup.find(id='note-content')
+
         if content_div:
-            content_div.clear()
-            content_soup = BeautifulSoup(intermediate_html, 'html.parser')
-            
-            # Smart PDF Mode Check
-            # If the note contains ONLY one PDF attachment (and minimal text), copy original PDF.
-            resources = note_data.get('resources', [])
-            
-            # resources might be a dict keyed by MD5 hash (from converter.py)
-            # Convert to list for consistent iteration
-            if isinstance(resources, dict):
-                resources_list = list(resources.values())
-            else:
-                resources_list = resources
-            
-            pdf_resources = [r for r in resources_list if isinstance(r, dict) and r.get('mime') == 'application/pdf']
-            
-            # Check text length (strip whitespace)
-            text_content = content_soup.get_text().strip()
-            # Allow some title overlap or small noise (e.g. filename repetition)
-            # 100 chars is arbitrary but safe for "just a file" notes
-            is_minimal_text = len(text_content) < 100 
-            
-            if len(pdf_resources) == 1 and is_minimal_text:
-                pdf_res = pdf_resources[0]
-                # We need to find the file.
-                # In converter.py, we decided filename. We need to find the correct file in target_dir/note_contents
-                # We can iterate the dir or try to match.
-                # Or reuse logic from HtmlFormatter._embed_images if we had it.
-                # Simple approach: Search for file in note_contents with matching MD5?
-                # Or just grab the first PDF file in note_contents if there is only 1 PDF resource?
-                
-                # Let's search by extension
-                note_contents_dir = target_dir / "note_contents"
-                if note_contents_dir.exists():
-                     pdf_files = list(note_contents_dir.glob("*.pdf"))
-                     if len(pdf_files) == 1:
-                         # Found candidate
-                         original_pdf = pdf_files[0]
-                         output_path = target_dir / f"{self._sanitize_filename(title)}.pdf"
-                         shutil.copy2(original_pdf, output_path)
-                         
-                         # Smart Mode: Update timestamp to match note data
-                         ts_date = note_data.get('updated') or note_data.get('created')
-                         if ts_date:
-                             try:
-                                 ts_timestamp = ts_date.timestamp()
-                                 os.utime(output_path, (ts_timestamp, ts_timestamp))
-                                 logging.debug(f"Smart PDF Mode: Set timestamp to {ts_date}")
-                             except Exception as e:
-                                 logging.warning(f"Smart PDF Mode: Failed to set timestamp: {e}")
+             content_div.clear()
+             content_soup = BeautifulSoup(intermediate_html, 'html.parser')
+             
+             self._embed_images_pdf(content_soup, resources_list)
+             content_div.append(content_soup)
 
-                         logging.info(f"Smart PDF Mode: Copied original PDF for '{title}'")
-                         # Pass the original PDF filename to exclude it from attachments
-                         self._copy_to_pdf_folder(output_path, target_dir, note_data, exclude_filenames={original_pdf.name})
-                         return output_path
-                
-            # Match logic from HtmlFormatter but apply PDF-specific visibility
-            # In HTML we used display:none. For PDF we want opacity:0 and position:absolute
-            # We need to ensure existing ocr-text divs are styled correctly.
-            # Let's add a style tag.
-            style_tag = soup.new_tag('style')
-            # Use specific class if possible, or generic display:none override?
-            # HtmlFormatter uses <div style="display:none;">. 
-            # We need to change that INLINE style or override it.
-            # Since inline style has high specificity, we must replace the inline attribute or use !important on ID/Class.
-            # But HtmlFormatter injected via `_embed_images`.
-            
-            # Let's override `_embed_images` behavior or post-process the soup.
-            # The base definition of `_embed_images` in `HtmlFormatter` uses:
-            # new_div = soup.new_tag('div', style="display:none;")
-            
-            # So we iterate and change style.
-            # NOTE: We skip calling _embed_images here because _embed_images_pdf handles embedding AND OCR injection
-            # self._embed_images(content_soup, resources_list)
-            
-            # Post-process to fix visibility for PDF
-            for div in content_soup.find_all('div', style="display:none;"):
-                # Check if it looks like our OCR div (has text content)
-                # Better: Check if it follows an image?
-                # Or just checking style="display:none;" is risky?
-                # To be safe, let's redefine `_embed_images` in PdfFormatter to use a class.
-                pass
-            
-            # Call our custom PDF-specific embedding and OCR injection
-            self._embed_images_pdf(content_soup, resources_list)
-            
-            content_div.append(content_soup)
-
-        # PDF Output Path
+        # Generate PDF using Playwright
         output_filename = f"{self._sanitize_filename(title)}.pdf"
         output_path = target_dir / output_filename
-        
-        # Attachment Link Rewriting for PDF
-        # We want links in PDF to point to: ./[PDF_DATE_NAME]_note_contents/file.zip
-        # Calc the prefix similarly to _copy_to_pdf_folder
-        
-        date_part = ""
-        created = note_data.get('created')
-        if created:
-            date_part = str(created).split(' ')[0]
-        
-        final_pdf_filename = output_filename
-        if date_part and not output_filename.startswith(date_part):
-            final_pdf_filename = f"{date_part}_{output_filename}"
+
+        try:
+            page = self.browser.new_page()
             
-        pdf_stem = Path(final_pdf_filename).stem
-        attachment_folder_name = f"{pdf_stem}_note_contents"
-        
-        # Iterate all <a> tags and rewrite if pointing to note_contents/
-        for a in soup.find_all('a'):
-            href = a.get('href', '')
-            if href.startswith('note_contents/'):
-                filename = href.split('/')[-1]
-                # Rewrite to new relative path
-                new_href = f"./{attachment_folder_name}/{filename}"
-                a['href'] = new_href
-                # Add a small icon or text to indicate attachment? (Optional)
-                # a.string = f"📎 {a.string}" 
-
-        # Add PDF Metadata
-        # WeasyPrint maps <meta> tags in head to PDF Info
-        # <meta name="author" content="..."> -> Author
-        # <meta name="description" content="..."> -> Subject
-        # <meta name="keywords" content="..."> -> Keywords
-        # <meta name="generator" content="..."> -> Creator
-        # <meta name="dcterms.created" content="..."> -> CreationDate
-        # <meta name="dcterms.modified" content="..."> -> ModDate
-        
-        if not soup.head:
-            soup.insert(0, soup.new_tag("head"))
+            # set_content with wait_until='networkidle' ensures images (embedded) are loaded
+            # Since we embed images as base64, this should be fast and reliable.
+            page.set_content(str(soup), wait_until="networkidle")
             
-        def add_meta(name, content):
-            if content:
-                meta = soup.new_tag("meta", attrs={"name": name, "content": str(content)})
-                soup.head.append(meta)
+            # Print to PDF
+            # A4, Print background graphics
+            page.pdf(path=str(output_path), format="A4", print_background=True, margin={"top": "20mm", "bottom": "20mm", "left": "20mm", "right": "20mm"})
+            
+            page.close()
+            
+            # Timestamp setting
+            ts_date = note_data.get('updated') or note_data.get('created')
+            if ts_date:
+                try:
+                    import time
+                    ts_timestamp = ts_date.timestamp()
+                    os.utime(output_path, (ts_timestamp, ts_timestamp))
+                except: pass
 
-        add_meta("author", note_data.get('author', ''))
-        add_meta("dcterms.created", note_data.get('created', ''))
-        if note_data.get('updated'):
-            add_meta("dcterms.modified", note_data.get('updated'))
-        add_meta("generator", "enex2md")
+            # Copy to _PDF folder
+            self._copy_to_pdf_folder(output_path, target_dir, note_data)
 
-        # Generate PDF
-        html_str = str(soup)
-        
-        # presentational_hints=True enables background colors and other HTML presentation styles
-        HTML(string=html_str, base_url=str(target_dir)).write_pdf(
-            output_path,
-            presentational_hints=True
-        )
-        
-        # Update Filesystem Timestamp (os.utime)
-        # Use updated date if available, else created date
-        ts_date = note_data.get('updated') or note_data.get('created')
-        if ts_date:
-            try:
-                # Assuming ts_date is a datetime object (it should be from parser)
-                import time
-                ts_timestamp = ts_date.timestamp()
-                os.utime(output_path, (ts_timestamp, ts_timestamp))
-                logging.debug(f"Set PDF timestamp to {ts_date}")
-            except Exception as e:
-                logging.warning(f"Failed to set timestamp for PDF: {e}")
+            return output_path
 
-        # Copy PDF to _PDF folder (maintains directory structure)
-        self._copy_to_pdf_folder(output_path, target_dir, note_data)
-        
-        return output_path
-    
+        except Exception as e:
+            logging.error(f"Playwright PDF generation failed for '{title}': {e}")
+            # Try to restart browser as it might be crashed
+            self.close_browser()
+            return None
+
     def _copy_to_pdf_folder(self, pdf_path, target_dir, note_data=None, exclude_filenames=None):
         """Copy the generated PDF to a _PDF folder, maintaining hierarchy."""
         try:
-            # Get the output root (parent of enex folder, which is parent of note folder)
-            # Structure: output_root / enex_stem / note_folder / file.pdf
-            # We want: output_root / _PDF / enex_stem / file.pdf (Flattened)
-            
-            note_folder = target_dir.name  # e.g., "2025-01-01_MyNote"
-            enex_folder = target_dir.parent.name  # e.g., "MyNotebook"
-            output_root = target_dir.parent.parent  # The base output directory
+            note_folder = target_dir.name
+            enex_folder = target_dir.parent.name
+            output_root = target_dir.parent.parent
             
             # Create _PDF folder structure (output_root / _PDF / enex_folder)
             pdf_dest_dir = output_root / "_PDF" / enex_folder
@@ -426,8 +266,6 @@ class PdfFormatter(HtmlFormatter):
             if note_data:
                 created = note_data.get('created')
                 date_part = ""
-                # created is usually "YYYY-MM-DD HH:MM:SS" or similar
-                # We want "YYYY-MM-DD_" prefix
                 if created:
                     date_part = str(created).split(' ')[0]
                 
@@ -440,37 +278,22 @@ class PdfFormatter(HtmlFormatter):
             logging.debug(f"Copied PDF to: {dest_path}")
             
             # --- Attachment Handling ---
-            # If there were attachments (links to note_contents/), we need to copy them too.
-            # The PDF generation logic (to be updated) rewrote links to point to "{filename_stem}_note_contents"
-            
             pdf_stem = Path(filename).stem
             attachment_folder_name = f"{pdf_stem}_note_contents"
-            
-            # Source of attachments: target_dir/note_contents
             source_attachments_dir = target_dir / "note_contents"
             
             if source_attachments_dir.exists():
-                # We need to check if any file in here was actually referenced/linked in the PDF.
-                # Since we don't have the list of referenced files easily here, let's copy ALL files 
-                # that are NOT images used in the PDF (images are embedded).
-                # Actually, copying everything is safer for completeness.
-                
-                # Destination: _PDF/enex_folder/attachment_folder_name
                 dest_attachments_dir = pdf_dest_dir / attachment_folder_name
                 
-                # Check if we should copy
-                # Filter out images, XML, JSON, and hidden files
                 excluded_extensions = {
                     '.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tiff',
                     '.xml', '.json'
                 }
                 
                 valid_attachments = []
-                valid_attachments = []
                 for f in source_attachments_dir.iterdir():
                     if f.is_file() and not f.name.startswith('.'):
                         if f.suffix.lower() not in excluded_extensions:
-                            # Also check explicit exclusion (e.g. main PDF)
                             if exclude_filenames and f.name in exclude_filenames:
                                 continue
                             valid_attachments.append(f)
@@ -488,116 +311,85 @@ class PdfFormatter(HtmlFormatter):
         except Exception as e:
             logging.warning(f"Failed to copy PDF to _PDF folder: {e}")
 
-    def _embed_images_pdf(self, soup, resources):
+    def _embed_images_pdf(self, soup, resource_list):
         """Embed images as Base64 and inject OCR text with PDF-friendly visibility."""
-        if not resources:
+        if not resource_list:
             return
 
-        # resources might be a dict keyed by MD5 hash (from converter.py)
-        # or a list of resource dicts. Handle both cases.
-        if isinstance(resources, dict):
-            resource_list = list(resources.values())
-        else:
-            resource_list = resources
-        
-        # Map by filename for lookup
         res_map_by_filename = {r.get('filename'): r for r in resource_list if isinstance(r, dict)}
         
-        # Find all img tags
-        # We might modify the tree, so iterate over a list
         for img in list(soup.find_all('img')):
             src = img.get('src')
-            if not src:
-                continue
-            
-            # src is likely "note_contents/filename.png"
+            if not src: continue
             filename = Path(src).name
-            
             res = res_map_by_filename.get(filename)
             if res:
                 # Embed Base64
                 if res.get('data_b64') and res.get('mime'):
                     img['src'] = f"data:{res['mime']};base64,{res['data_b64']}"
                 
-                # Inject OCR Text with position awareness
+                # Inject OCR Text
                 ocr_position_data = res.get('ocr_position_data')
                 
                 if ocr_position_data and ocr_position_data.get('words'):
-                    # Position-aware OCR: Place each word at its exact location
                     img_width = ocr_position_data['image_width']
                     img_height = ocr_position_data['image_height']
                     words = ocr_position_data['words']
                     
-                    # Wrap image in a relative container
                     wrapper = soup.new_tag('div', style="position:relative; display:inline-block;")
                     img.wrap(wrapper)
                     
-                    # Create a text overlay container sized to match image
                     text_layer = soup.new_tag('div', style=f"""
-                        position: absolute;
-                        top: 0;
-                        left: 0;
-                        width: 100%;
-                        height: 100%;
-                        z-index: 10;
-                        pointer-events: none;
+                        position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+                        z-index: 10; pointer-events: none;
                     """)
                     
-                    # Add each word as a positioned span
                     for word_info in words:
-                        # Calculate position as percentage of image size
                         left_pct = (word_info['left'] / img_width) * 100
                         top_pct = (word_info['top'] / img_height) * 100
                         width_pct = (word_info['width'] / img_width) * 100
                         height_pct = (word_info['height'] / img_height) * 100
                         
-                        # Estimate font size in pt based on word height
-                        # Assume image roughly fits on A4 page (~800px typical image height = ~500pt page height)
-                        # So we scale: word_height_px * (500pt / img_height_px) * 0.8 (factor for line-height)
-                        font_size_pt = max(4, min(word_info['height'] * 0.6, 48))  # Clamp between 4pt and 48pt
+                        # Font size constraint
+                        font_size_pt = max(4, min(word_info['height'] * 0.6, 48))
                         
                         word_span = soup.new_tag('span', style=f"""
                             position: absolute;
-                            left: {left_pct:.2f}%;
-                            top: {top_pct:.2f}%;
-                            width: {width_pct:.2f}%;
-                            height: {height_pct:.2f}%;
+                            left: {left_pct:.2f}%; top: {top_pct:.2f}%;
+                            width: {width_pct:.2f}%; height: {height_pct:.2f}%;
                             color: rgba(0,0,0,0);
                             font-size: {font_size_pt:.1f}pt;
                             line-height: 1;
-                            white-space: nowrap;
-                            overflow: hidden;
+                            white-space: nowrap; overflow: hidden;
                         """)
                         word_span.string = word_info['text']
                         text_layer.append(word_span)
                     
                     wrapper.append(text_layer)
-                    logging.debug(f"Positioned {len(words)} OCR words for '{filename}'")
                     
                 elif res.get('recognition'):
-                    # Fallback: Use old method for non-positioned OCR (e.g., Evernote native)
+                    # Fallback non-positioned OCR
                     recognition_xml = res.get('recognition')
                     text_content = self._extract_text_from_reco(recognition_xml)
                     if text_content:
                         wrapper = soup.new_tag('div', style="position:relative; display:inline-block;")
                         img.wrap(wrapper)
-                        
                         new_div = soup.new_tag('div', style="""
-                            position: absolute; 
-                            top: 0; 
-                            left: 0; 
-                            width: 100%; 
-                            height: 100%;
-                            color: rgba(0,0,0,0); 
-                            font-size: 12pt;
-                            overflow: hidden;
-                            z-index: 10;
-                            line-height: 1.2;
+                            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+                            color: rgba(0,0,0,0); font-size: 12pt; overflow: hidden; z-index: 10;
                         """)
                         new_div.string = text_content
                         wrapper.append(new_div)
 
+    def _extract_text_from_reco(self, reco_xml):
+        """Extracts plain text from recognition XML."""
+        if not reco_xml: return ""
+        try:
+            soup = BeautifulSoup(reco_xml, 'xml')
+            return soup.get_text(separator=' ').strip()
+        except:
+            return ""
+
     def _sanitize_filename(self, name):
-        """Sanitize string to be safe for filenames."""
-        sanitize_char = self.config.get('output', {}).get('filename_sanitize_char', '_')
-        return re.sub(r'[<>:"/\\|?*]', sanitize_char, name).strip()
+         sanitize_char = self.config.get('output', {}).get('filename_sanitize_char', '_')
+         return re.sub(r'[<>:"/\\|?*]', sanitize_char, name).strip()
