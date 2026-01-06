@@ -8,3 +8,4 @@ Pillow
 playwright
 reverse_geocoder
 rich
+pillow-heif

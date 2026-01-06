@@ -186,24 +186,75 @@ class NoteConverter:
         import xml.sax.saxutils
         import threading
         
+        # Try to enable HEIC support
+        try:
+            from pillow_heif import register_heif_opener
+            register_heif_opener()
+        except ImportError:
+            pass
+
         lang = self.config.get('ocr', {}).get('language', 'jpn')
-        image = Image.open(io.BytesIO(data))
+        
+        try:
+            # Open image and preprocess for better OCR accuracy
+            image = Image.open(io.BytesIO(data))
+            
+            # Skip OCR for very small images (icons, spacers, tracking pixels)
+            if image.width < 50 or image.height < 50:
+                 logging.debug(f"   - Skipping OCR for small image {filename} ({image.width}x{image.height})")
+                 return None, None
+            
+            # Convert to RGB immediately to handle GIF/Palette modes safely
+            if image.mode != 'RGB':
+                image = image.convert('RGB')
+
+            # Downscale very large images to speed up OCR (max dimension 1500px)
+            max_dim = 1500
+            if max(image.width, image.height) > max_dim:
+                scale = max_dim / float(max(image.width, image.height))
+                new_size = (int(image.width * scale), int(image.height * scale))
+                image = image.resize(new_size, resample=Image.LANCZOS)
+                logging.info(f"   - Downscaled image {filename} to {new_size} for OCR speed")
+            # 1. Convert to grayscale
+            image = image.convert('L')
+            # 2. Enhance contrast
+            from PIL import ImageOps
+            image = ImageOps.autocontrast(image)
+            # 3. Binarize (simple threshold)
+            image = image.point(lambda x: 0 if x < 128 else 255, '1')
+            # 4. Upscale to improve recognition (optional, double size)
+            width, height = image.size
+            image = image.resize((width * 2, height * 2), resample=Image.LANCZOS)
+            # 5. Convert back to RGB for Tesseract compatibility
+            image = image.convert('RGB')
+        except Exception as e:
+            logging.warning(f"Failed to open image {filename} for OCR: {e}")
+            return None, None
         
         # Perform OCR with position data
-        ocr_data = pytesseract.image_to_data(image, lang=lang, output_type=pytesseract.Output.DICT)
+        try:
+            # Perform OCR with tuned configuration for higher accuracy
+            tesseract_config = '--oem 3 --psm 6 -c preserve_interword_spaces=1'
+            ocr_data = pytesseract.image_to_data(image, lang=lang, config=tesseract_config, output_type=pytesseract.Output.DICT)
+        except Exception as e:
+            logging.warning(f"Tesseract failed for {filename}: {e}")
+            return None, None
         
         # Build position-aware text data
         words_with_positions = []
         for i in range(len(ocr_data['text'])):
             text = ocr_data['text'][i].strip()
             conf = ocr_data['conf'][i]
-            if text and conf > 0:
+            if text and int(float(conf)) > 0:
                 words_with_positions.append({
                     'text': text,
                     'left': ocr_data['left'][i],
                     'top': ocr_data['top'][i],
                     'width': ocr_data['width'][i],
                     'height': ocr_data['height'][i],
+                    'line_num': ocr_data.get('line_num', [0] * len(ocr_data['text']))[i],
+                    'block_num': ocr_data.get('block_num', [0] * len(ocr_data['text']))[i],
+                    'par_num': ocr_data.get('par_num', [0] * len(ocr_data['text']))[i],
                     'conf': conf
                 })
         
@@ -217,8 +268,11 @@ class NoteConverter:
                 'words': words_with_positions
             }
             
-            # Generate plain text for backwards compatibility
+            # Generate plain text with Japanese spacing fix
             plain_text = ' '.join([w['text'] for w in words_with_positions])
+            # Remove spaces between Japanese characters
+            plain_text = re.sub(r'([\u3000-\u30ff\u4e00-\u9fff])\s+([\u3000-\u30ff\u4e00-\u9fff])', r'\1\2', plain_text)
+            
             safe_text = xml.sax.saxutils.escape(plain_text)
             recognition = f"<recoIndex><item><t>{safe_text}</t></item></recoIndex>"
             

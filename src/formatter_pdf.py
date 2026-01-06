@@ -137,10 +137,46 @@ class PdfFormatter(HtmlFormatter):
                 line-height: 1.6;
                 color: #333;
                 width: 100%;
-                max-width: none !important;
+                max-width: 100% !important; /* Force width constraint to prevent scaling */
                 margin: 0;
+                overflow-wrap: break-word;
+                word-wrap: break-word;
             }
-            img { max-width: 100%; height: auto; display: block; margin: 10px auto; }
+            /* Fit image to page height (A4 297mm - 20mm margin = 277mm, safe 275mm) */
+            img { 
+                max-width: 100%; 
+                max-height: 275mm; 
+                height: auto; 
+                width: auto; /* maintain aspect ratio */
+                display: block; 
+                margin: 10px auto; 
+                page-break-inside: avoid;
+            }
+            
+            /* Unified Title and Meta Styling */
+            h1 {
+                font-size: 24px !important;
+                margin-top: 0;
+                margin-bottom: 10px;
+                line-height: 1.3;
+                color: #333;
+                page-break-after: avoid;
+                overflow-wrap: break-word;
+                word-wrap: break-word;
+                width: 100%;
+            }
+            .note-meta {
+                margin-bottom: 20px;
+                padding-bottom: 10px;
+                border-bottom: 1px solid #eee;
+            }
+            .note-meta p {
+                font-size: 10pt !important; /* ~13.3px */
+                margin: 2px 0;
+                line-height: 1.4;
+                color: #666;
+            }
+
             table { width: 100%; border-collapse: collapse; margin-bottom: 1em; }
             th, td { border: 1px solid #ddd; padding: 8px; text-align: left; vertical-align: top; }
             th { background-color: #f5f5f5; }
@@ -153,6 +189,10 @@ class PdfFormatter(HtmlFormatter):
                 .no-print { display: none; }
                 h1, h2, h3 { page-break-after: avoid; }
                 img, table, pre { page-break-inside: avoid; }
+                
+                /* Enforce print sizes */
+                h1 { font-size: 18pt !important; }
+                .note-meta p { font-size: 9pt !important; }
             }
         """
         if soup.head:
@@ -223,12 +263,19 @@ class PdfFormatter(HtmlFormatter):
             page = self.browser.new_page()
             
             # set_content with wait_until='networkidle' ensures images (embedded) are loaded
-            # Since we embed images as base64, this should be fast and reliable.
             page.set_content(str(soup), wait_until="networkidle")
             
+            # A4 size standard
+            # We revert to A4 as dynamic height produced unmanageably long PDFs.
+            # We treat images to fit within one page using CSS max-height.
+
             # Print to PDF
-            # A4, Print background graphics
-            page.pdf(path=str(output_path), format="A4", print_background=True, margin={"top": "10mm", "bottom": "10mm", "left": "10mm", "right": "10mm"})
+            page.pdf(
+                path=str(output_path), 
+                format="A4", 
+                print_background=True, 
+                margin={"top": "10mm", "bottom": "10mm", "left": "10mm", "right": "10mm"}
+            )
             
             page.close()
             
@@ -357,27 +404,79 @@ class PdfFormatter(HtmlFormatter):
                         z-index: 10; pointer-events: none;
                     """)
                     
-                    for word_info in words:
-                        left_pct = (word_info['left'] / img_width) * 100
-                        top_pct = (word_info['top'] / img_height) * 100
-                        width_pct = (word_info['width'] / img_width) * 100
-                        height_pct = (word_info['height'] / img_height) * 100
-                        
-                        # Font size constraint
-                        font_size_pt = max(4, min(word_info['height'] * 0.6, 48))
-                        
-                        word_span = soup.new_tag('span', style=f"""
-                            position: absolute;
-                            left: {left_pct:.2f}%; top: {top_pct:.2f}%;
-                            width: {width_pct:.2f}%; height: {height_pct:.2f}%;
-                            color: rgba(0,0,0,0.01);
-                            font-size: {font_size_pt:.1f}pt;
-                            line-height: 1;
-                            white-space: nowrap; overflow: hidden;
-                        """)
-                        word_span.string = word_info['text']
-                        text_layer.append(word_span)
-                    
+                    if ocr_position_data.get('words'):
+                         has_line_info = False
+                         lines = {}
+                         for w in words:
+                             line_key = (w.get('block_num', 0), w.get('par_num', 0), w.get('line_num', 0))
+                             if line_key != (0,0,0): has_line_info = True
+                             if line_key not in lines: lines[line_key] = []
+                             lines[line_key].append(w)
+                         
+                         if has_line_info:
+                             # Render by Line
+                             sorted_keys = sorted(lines.keys())
+                             for key in sorted_keys:
+                                 line_words = lines[key]
+                                 if not line_words: continue
+                                 
+                                 # Merge Text
+                                 text_parts = [w['text'] for w in line_words]
+                                 line_text = ' '.join(text_parts)
+                                 # Remove spaces between Japanese characters
+                                 line_text = re.sub(r'([\u3000-\u30ff\u4e00-\u9fff])\s+([\u3000-\u30ff\u4e00-\u9fff])', r'\1\2', line_text)
+                                 
+                                 # Calculate line geometry
+                                 first = line_words[0]
+                                 last = line_words[-1]
+                                 
+                                 l_left = first['left']
+                                 l_top = min(w['top'] for w in line_words)
+                                 l_right = last['left'] + last['width']
+                                 l_width = l_right - l_left
+                                 l_height = max(w['height'] for w in line_words)
+                                 
+                                 left_pct = (l_left / img_width) * 100
+                                 top_pct = (l_top / img_height) * 100
+                                 width_pct = (l_width / img_width) * 100
+                                 height_pct = (l_height / img_height) * 100
+                                 
+                                 font_size_pt = max(4, min(l_height * 0.7, 48))
+                                 
+                                 word_span = soup.new_tag('span', style=f"""
+                                     position: absolute;
+                                     left: {left_pct:.2f}%; top: {top_pct:.2f}%;
+                                     width: {width_pct:.2f}%; height: {height_pct:.2f}%;
+                                     color: rgba(0,0,0,0.01);
+                                     font-size: {font_size_pt:.1f}pt;
+                                     line-height: 1;
+                                     white-space: nowrap; overflow: hidden;
+                                 """)
+                                 word_span.string = line_text
+                                 text_layer.append(word_span)
+                         else:
+                             # Fallback to word-by-word
+                            for word_info in words:
+                                left_pct = (word_info['left'] / img_width) * 100
+                                top_pct = (word_info['top'] / img_height) * 100
+                                width_pct = (word_info['width'] / img_width) * 100
+                                height_pct = (word_info['height'] / img_height) * 100
+                                
+                                # Font size constraint
+                                font_size_pt = max(4, min(word_info['height'] * 0.6, 48))
+                                
+                                word_span = soup.new_tag('span', style=f"""
+                                    position: absolute;
+                                    left: {left_pct:.2f}%; top: {top_pct:.2f}%;
+                                    width: {width_pct:.2f}%; height: {height_pct:.2f}%;
+                                    color: rgba(0,0,0,0.01);
+                                    font-size: {font_size_pt:.1f}pt;
+                                    line-height: 1;
+                                    white-space: nowrap; overflow: hidden;
+                                """)
+                                word_span.string = word_info['text']
+                                text_layer.append(word_span)
+                            
                     wrapper.append(text_layer)
                     
                 elif res.get('recognition'):
