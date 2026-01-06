@@ -160,55 +160,62 @@ def process_enex(enex_path, config, converter, html_formatter, md_formatter, pdf
             logging.error(f"Error converting note '{title}': {e}", exc_info=False) # Reduce noise
             return (False, False, title)
 
-    # Collect notes
-    all_notes = list(parser.parse())
-    notes_to_process = []
-    
-    # --- Retry Filter Logic ---
-    retry_list = None
+    # --- Retry Filter Logic (load before streaming) ---
+    retry_entries = None
     if getattr(args, 'retry_run', None):
         try:
             with open(args.retry_run, 'r', encoding='utf-8') as f:
-                retry_list = set(json.load(f)) # Set of titles
-            logging.info(f"Retry Run: Loaded {len(retry_list)} failed notes from {args.retry_run}")
+                retry_data = json.load(f)
+            # Build a set of (enex_name, title) tuples for matching
+            retry_entries = set()
+            for entry in retry_data:
+                if isinstance(entry, dict):
+                    retry_entries.add((entry.get('enex_name', ''), entry.get('title', '')))
+                else:
+                    # Fallback for old format (just titles)
+                    retry_entries.add(('', entry))
+            logging.info(f"Retry Run: Loaded {len(retry_entries)} failed notes from {args.retry_run}")
         except Exception as e:
             logging.error(f"Failed to load retry file: {e}")
             return
 
-    for note in all_notes:
-        title = note.get('title', 'Untitled')
-        if retry_list is not None:
-             if title not in retry_list:
-                 skipped += 1 # Count as skipped for progress
-                 continue
-        notes_to_process.append(note)
-    
-    # --- Processing ---
+    # --- Processing (Sequential Streaming - memory efficient) ---
     failed_notes_log = []
-    timeout_sec = getattr(args, 'timeout', 120) if args else 120
-    
-    from concurrent.futures import wait, FIRST_COMPLETED
+    timeout_sec = getattr(args, 'timeout', 60) if args else 60
     import time
-
-    with ThreadPoolExecutor(max_workers=note_workers) as executor:
-        futures = {executor.submit(process_single_note, note): note for note in notes_to_process}
-        pending = set(futures.keys())
-        
-        # Track start times for each future
-        start_times = {f: time.time() for f in futures}
-        
-        while pending:
-            # Wait for any future to complete, with a short timeout for responsiveness
-            check_interval = 5  # Check every 5 seconds
-            done, pending = wait(pending, timeout=check_interval, return_when=FIRST_COMPLETED)
+    import signal
+    
+    # Simple timeout using alarm (Unix only, but works in Docker)
+    class TimeoutException(Exception):
+        pass
+    
+    def timeout_handler(signum, frame):
+        raise TimeoutException("Note processing timed out")
+    
+    # Process notes sequentially from generator (memory efficient)
+    # Error handling wrapped around the generator iteration
+    try:
+        for note_data in parser.parse():
+            title = note_data.get('title', 'Untitled')
             
-            # Process completed futures
-            for future in done:
-                note_ref = futures[future]
-                note_title = note_ref.get('title', 'Untitled')
+            # Check retry filter
+            if retry_entries is not None:
+                if (enex_stem, title) not in retry_entries and ('', title) not in retry_entries:
+                    skipped += 1
+                    if progress and task_id is not None:
+                        progress.advance(task_id)
+                    continue
+            
+            # Process with timeout
+            start_time = time.time()
+            try:
+                # Set alarm for timeout (Unix signal-based)
+                old_handler = signal.signal(signal.SIGALRM, timeout_handler)
+                signal.alarm(timeout_sec)
                 
                 try:
-                    success, was_skipped, title = future.result(timeout=0)  # Already done, no wait
+                    success, was_skipped, result_title = process_single_note(note_data)
+                    signal.alarm(0)  # Cancel alarm
                     
                     if success:
                         count += 1
@@ -216,43 +223,53 @@ def process_enex(enex_path, config, converter, html_formatter, md_formatter, pdf
                         skipped += 1
                     else:
                         errors += 1
-                        failed_notes_log.append(title)
-                except Exception as e:
-                    logging.error(f"Exception processing note '{note_title}': {e}")
+                        failed_notes_log.append({
+                            "enex_file": str(enex_path),
+                            "enex_name": enex_stem,
+                            "title": result_title,
+                            "reason": "error"
+                        })
+                except TimeoutException:
+                    elapsed = int(time.time() - start_time)
+                    logging.error(f"TIMEOUT: '{title}' exceeded {timeout_sec}s (elapsed: {elapsed}s). Skipping.")
                     errors += 1
-                    failed_notes_log.append(note_title)
-                
-                # Update Progress
-                if progress and task_id is not None:
-                    progress.advance(task_id)
-            
-            # Check for timed-out futures in pending set
-            now = time.time()
-            timed_out_futures = []
-            for future in list(pending):
-                elapsed = now - start_times[future]
-                if elapsed > timeout_sec:
-                    note_ref = futures[future]
-                    note_title = note_ref.get('title', 'Untitled')
-                    logging.error(f"TIMEOUT: '{note_title}' exceeded {timeout_sec}s (elapsed: {int(elapsed)}s). Skipping.")
-                    errors += 1
-                    failed_notes_log.append(note_title)
-                    timed_out_futures.append(future)
+                    failed_notes_log.append({
+                        "enex_file": str(enex_path),
+                        "enex_name": enex_stem,
+                        "title": title,
+                        "reason": f"timeout ({elapsed}s)"
+                    })
+                finally:
+                    signal.signal(signal.SIGALRM, old_handler)
+                    signal.alarm(0)
                     
-                    # Update Progress (count as processed)
-                    if progress and task_id is not None:
-                        progress.advance(task_id)
+            except Exception as e:
+                logging.error(f"Exception processing note '{title}': {e}")
+                errors += 1
+                failed_notes_log.append({
+                    "enex_file": str(enex_path),
+                    "enex_name": enex_stem,
+                    "title": title,
+                    "reason": str(e)
+                })
             
-            # Remove timed-out futures from pending (don't wait for them anymore)
-            for future in timed_out_futures:
-                pending.discard(future)
-                # Note: The thread itself may still be running, but we move on
-            
-            # Show countdown for pending notes
-            if pending:
-                oldest_pending_time = min(now - start_times[f] for f in pending)
-                remaining = max(0, timeout_sec - int(oldest_pending_time))
-                logging.info(f"[Status] {len(pending)} notes pending. Oldest running: {int(oldest_pending_time)}s / {timeout_sec}s (timeout in ~{remaining}s)")
+            # Update Progress
+            if progress and task_id is not None:
+                progress.advance(task_id)
+                
+    except Exception as e:
+        # XML parse error or other generator error
+        logging.error(f"Failed to parse ENEX file '{enex_path}': {e}")
+        logging.error(f"Remaining notes in this ENEX file will be skipped.")
+        # Record failure for the file
+        output_root = config.get('output', {}).get('root_dir', '/output')
+        fail_log_path = os.path.join(output_root, args.fail_log if args else 'failed_notes.json')
+        failed_notes_log.append({
+            "enex_file": str(enex_path),
+            "enex_name": enex_stem,
+            "title": "(PARSE ERROR - REMAINING NOTES SKIPPED)",
+            "reason": str(e)
+        })
 
     # Write Fail Log
     if failed_notes_log:
@@ -268,7 +285,17 @@ def process_enex(enex_path, config, converter, html_formatter, md_formatter, pdf
                     try: existing_failures = json.load(f)
                     except: pass
             
-            combined = list(set(existing_failures + failed_notes_log))
+            # Dedupe by (enex_name, title) key
+            seen_keys = set()
+            combined = []
+            for entry in existing_failures + failed_notes_log:
+                if isinstance(entry, dict):
+                    key = (entry.get('enex_name', ''), entry.get('title', ''))
+                else:
+                    key = ('', entry)
+                if key not in seen_keys:
+                    seen_keys.add(key)
+                    combined.append(entry)
             
             with open(fail_log_path, 'w', encoding='utf-8') as f:
                 json.dump(combined, f, ensure_ascii=False, indent=2)
@@ -289,7 +316,7 @@ def main():
     parser.add_argument('--pdf-fit-mode', action='store_true', help="Force content to fit within PDF page width (breaks tables/pre).")
     parser.add_argument('--retry-run', help="JSON file containing list of note titles to retry.")
     parser.add_argument('--fail-log', default="failed_notes.json", help="Output JSON file for failed/skipped notes.")
-    parser.add_argument('--timeout', type=int, default=120, help="Timeout in seconds for processing a single note.")
+    parser.add_argument('--timeout', type=int, default=60, help="Timeout in seconds for processing a single note.")
 
     args = parser.parse_args()
 
