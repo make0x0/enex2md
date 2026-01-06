@@ -370,7 +370,7 @@ class PdfFormatter(HtmlFormatter):
                             position: absolute;
                             left: {left_pct:.2f}%; top: {top_pct:.2f}%;
                             width: {width_pct:.2f}%; height: {height_pct:.2f}%;
-                            color: rgba(0,0,0,0);
+                            color: rgba(0,0,0,0.01);
                             font-size: {font_size_pt:.1f}pt;
                             line-height: 1;
                             white-space: nowrap; overflow: hidden;
@@ -389,7 +389,7 @@ class PdfFormatter(HtmlFormatter):
                         img.wrap(wrapper)
                         new_div = soup.new_tag('div', style="""
                             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-                            color: rgba(0,0,0,0); font-size: 12pt; overflow: hidden; z-index: 10;
+                            color: rgba(0,0,0,0.01); font-size: 12pt; overflow: hidden; z-index: 10;
                         """)
                         new_div.string = text_content
                         wrapper.append(new_div)
