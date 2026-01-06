@@ -7,6 +7,7 @@ class NoteParser:
     def __init__(self, file_path):
         self.file_path = file_path
 
+    def parse(self):
         """Yields note data dictionaries from the ENEX file."""
         # recover=True to handle broken XML tags (e.g. mismatch)
         context = etree.iterparse(str(self.file_path), events=('end',), tag='note', huge_tree=True, recover=True)
