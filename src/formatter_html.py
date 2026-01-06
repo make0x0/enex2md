@@ -61,8 +61,9 @@ class HtmlFormatter:
             source_url = note_data.get('source_url')
             if source_url:
                 url_p = soup.new_tag('p')
+                url_p.string = "Source URL: "
                 url_a = soup.new_tag('a', href=source_url, target="_blank", rel="noopener noreferrer")
-                url_a.string = f"Source URL: {source_url}"
+                url_a.string = source_url
                 url_p.append(url_a)
                 meta_div.append(url_p)
                 

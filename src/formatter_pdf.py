@@ -93,8 +93,9 @@ class PdfFormatter(HtmlFormatter):
             source_url = note_data.get('source_url')
             if source_url:
                 url_p = soup.new_tag('p')
+                url_p.string = "Source URL: "
                 url_a = soup.new_tag('a', href=source_url, target="_blank")
-                url_a.string = f"Source URL: {source_url}"
+                url_a.string = source_url
                 url_p.append(url_a)
                 meta_div.append(url_p)
 
@@ -130,12 +131,13 @@ class PdfFormatter(HtmlFormatter):
         # CSS - Chromium rendering is good, but we can add some print styles
         pdf_style = soup.new_tag('style')
         pdf_style.string = """
-            @page { margin: 20mm; }
+            @page { margin: 10mm; }
             body { 
                 font-family: "Noto Sans CJK JP", "Meiryo", sans-serif;
                 line-height: 1.6;
                 color: #333;
                 width: 100%;
+                max-width: none !important;
                 margin: 0;
             }
             img { max-width: 100%; height: auto; display: block; margin: 10px auto; }
@@ -226,7 +228,7 @@ class PdfFormatter(HtmlFormatter):
             
             # Print to PDF
             # A4, Print background graphics
-            page.pdf(path=str(output_path), format="A4", print_background=True, margin={"top": "20mm", "bottom": "20mm", "left": "20mm", "right": "20mm"})
+            page.pdf(path=str(output_path), format="A4", print_background=True, margin={"top": "10mm", "bottom": "10mm", "left": "10mm", "right": "10mm"})
             
             page.close()
             
