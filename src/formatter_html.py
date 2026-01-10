@@ -131,7 +131,10 @@ class HtmlFormatter:
             if embed_images:
                  self._embed_images(content_soup, note_data.get('resources', []))
             
-            content_div.append(content_soup)
+            # content_div.append(content_soup) # This can cause IndexError in some BS4 versions
+            # Safe append:
+            for element in list(content_soup.contents):
+                content_div.append(element)
         
         output_path = target_dir / "index.html"
         with open(output_path, 'w', encoding='utf-8') as f:

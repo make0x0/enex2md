@@ -253,7 +253,9 @@ class PdfFormatter(HtmlFormatter):
              content_soup = BeautifulSoup(intermediate_html, 'html.parser')
              
              self._inject_ocr_overlays(content_soup, resources_list)
-             content_div.append(content_soup)
+             # Safe append to avoid IndexError
+             for element in list(content_soup.contents):
+                 content_div.append(element)
 
         # Generate PDF using Playwright with direct file loading (Faster & Stable)
         output_filename = f"{self._sanitize_filename(title)}.pdf"
