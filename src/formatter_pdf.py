@@ -511,4 +511,7 @@ class PdfFormatter(HtmlFormatter):
 
     def _sanitize_filename(self, name):
          sanitize_char = self.config.get('output', {}).get('filename_sanitize_char', '_')
-         return re.sub(r'[<>:"/\\|?*]', sanitize_char, name).strip()
+         sanitized = re.sub(r'[<>:"/\\|?*]', sanitize_char, name).strip()
+         if len(sanitized) > 100:
+             sanitized = sanitized[:100].strip()
+         return sanitized

@@ -194,7 +194,10 @@ class HtmlFormatter:
         sanitize_char = self.config.get('output', {}).get('filename_sanitize_char', '_')
         
         def sanitize(name):
-             return re.sub(r'[<>:"/\\|?*]', sanitize_char, name).strip()
+             sanitized = re.sub(r'[<>:"/\\|?*]', sanitize_char, name).strip()
+             if len(sanitized) > 100:
+                 sanitized = sanitized[:100].strip()
+             return sanitized
         
         for res in resource_list:
             if not isinstance(res, dict) or not res.get('data_b64'): continue
