@@ -252,23 +252,26 @@ class PdfFormatter(HtmlFormatter):
              content_div.clear()
              content_soup = BeautifulSoup(intermediate_html, 'html.parser')
              
-             self._embed_images_pdf(content_soup, resources_list)
+             self._inject_ocr_overlays(content_soup, resources_list)
              content_div.append(content_soup)
 
-        # Generate PDF using Playwright
+        # Generate PDF using Playwright with direct file loading (Faster & Stable)
         output_filename = f"{self._sanitize_filename(title)}.pdf"
         output_path = target_dir / output_filename
+        
+        temp_html_path = target_dir / "temp_render.html"
 
         try:
+            # Save intermediate HTML to a temporary file
+            with open(temp_html_path, "w", encoding="utf-8") as f:
+                f.write(str(soup))
+            
             page = self.browser.new_page()
             
-            # set_content with wait_until='networkidle' ensures images (embedded) are loaded
-            page.set_content(str(soup), wait_until="networkidle")
+            # Go to the local file URL
+            # High timeout (5 mins) for heavy pages
+            page.goto(f"file://{temp_html_path.resolve()}", wait_until="networkidle", timeout=300000)
             
-            # A4 size standard
-            # We revert to A4 as dynamic height produced unmanageably long PDFs.
-            # We treat images to fit within one page using CSS max-height.
-
             # Print to PDF
             page.pdf(
                 path=str(output_path), 
@@ -278,6 +281,11 @@ class PdfFormatter(HtmlFormatter):
             )
             
             page.close()
+            
+            # Cleanup temp HTML
+            try:
+                temp_html_path.unlink()
+            except: pass
             
             # Timestamp setting
             ts_date = note_data.get('updated') or note_data.get('created')
@@ -371,8 +379,8 @@ class PdfFormatter(HtmlFormatter):
         except Exception as e:
             logging.warning(f"Failed to copy PDF to _PDF folder: {e}")
 
-    def _embed_images_pdf(self, soup, resource_list):
-        """Embed images as Base64 and inject OCR text with PDF-friendly visibility."""
+    def _inject_ocr_overlays(self, soup, resource_list):
+        """Inject OCR text overlays. NO Base64 embedding (images load from file)."""
         if not resource_list:
             return
 
@@ -384,9 +392,8 @@ class PdfFormatter(HtmlFormatter):
             filename = Path(src).name
             res = res_map_by_filename.get(filename)
             if res:
-                # Embed Base64
-                if res.get('data_b64') and res.get('mime'):
-                    img['src'] = f"data:{res['mime']};base64,{res['data_b64']}"
+                # SKIP Base64 embedding. The src is already 'note_contents/filename'
+                # which works because we load the HTML file from 'target_dir'.
                 
                 # Inject OCR Text
                 ocr_position_data = res.get('ocr_position_data')

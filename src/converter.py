@@ -204,8 +204,24 @@ class NoteConverter:
                  logging.debug(f"   - Skipping OCR for small image {filename} ({image.width}x{image.height})")
                  return None, None
             
-            # Convert to RGB immediately to handle GIF/Palette modes safely
-            if image.mode != 'RGB':
+            # Robust conversion to RGB with white background handling for transparency
+            # This handles 'P' (Palette), 'RGBA', 'LA' modes which might crash Tesseract or produce black backgrounds
+            if image.mode in ('P', 'RGBA', 'LA') or (image.mode == 'P' and 'transparency' in image.info):
+                if image.mode == 'P':
+                    image = image.convert('RGBA')
+                
+                # Create white background
+                bg = Image.new('RGB', image.size, (255, 255, 255))
+                # Paste image on top (using alpha channel if available)
+                if image.mode == 'RGBA':
+                    try:
+                        bg.paste(image, mask=image.split()[3]) # 3 is alpha
+                    except Exception:
+                        bg.paste(image) # Fallback
+                else:
+                    bg.paste(image)
+                image = bg
+            elif image.mode != 'RGB':
                 image = image.convert('RGB')
 
             # Downscale very large images to speed up OCR (max dimension 1500px)
@@ -242,21 +258,35 @@ class NoteConverter:
         
         # Build position-aware text data
         words_with_positions = []
-        for i in range(len(ocr_data['text'])):
+        num_items = len(ocr_data['text'])
+        
+        # Helper to get value safely
+        def get_safe(key, idx, default=0):
+            lst = ocr_data.get(key, [])
+            if idx < len(lst):
+                return lst[idx]
+            return default
+
+        for i in range(num_items):
             text = ocr_data['text'][i].strip()
-            conf = ocr_data['conf'][i]
-            if text and int(float(conf)) > 0:
-                words_with_positions.append({
-                    'text': text,
-                    'left': ocr_data['left'][i],
-                    'top': ocr_data['top'][i],
-                    'width': ocr_data['width'][i],
-                    'height': ocr_data['height'][i],
-                    'line_num': ocr_data.get('line_num', [0] * len(ocr_data['text']))[i],
-                    'block_num': ocr_data.get('block_num', [0] * len(ocr_data['text']))[i],
-                    'par_num': ocr_data.get('par_num', [0] * len(ocr_data['text']))[i],
-                    'conf': conf
-                })
+            # conf can be '-1' or similar
+            try:
+                conf = get_safe('conf', i, -1)
+                
+                if text and int(float(conf)) > 0:
+                    words_with_positions.append({
+                        'text': text,
+                        'left': get_safe('left', i),
+                        'top': get_safe('top', i),
+                        'width': get_safe('width', i),
+                        'height': get_safe('height', i),
+                        'line_num': get_safe('line_num', i),
+                        'block_num': get_safe('block_num', i),
+                        'par_num': get_safe('par_num', i),
+                        'conf': conf
+                    })
+            except (ValueError, TypeError, IndexError):
+                continue
         
         recognition = None
         ocr_position_data = None

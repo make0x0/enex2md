@@ -5,6 +5,7 @@ import yaml
 import logging
 import shutil
 import json
+from lxml import etree
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 
@@ -93,13 +94,19 @@ logging:
     # Let's count notes first (Helper function)
     
 def count_notes_in_enex(enex_path):
-    """Fast scan to count <note> tags."""
+    """Fast scan to count <note> tags using streaming XML parser."""
     count = 0
     try:
-        with open(enex_path, 'rb') as f:
-            for line in f:
-                if b'<note>' in line: # Simple heuristic
-                    count += 1
+        # iterparse is efficient and streaming
+        # tag='note' event='end' ensures we count complete notes
+        context = etree.iterparse(str(enex_path), events=('end',), tag='note', recover=True, huge_tree=True)
+        for event, elem in context:
+            count += 1
+            # Clear element to save memory during scan
+            elem.clear()
+            while elem.getprevious() is not None:
+                del elem.getparent()[0]
+        del context
     except Exception as e:
         logging.warning(f"Failed to count notes in {enex_path}: {e}")
     return count
@@ -157,7 +164,7 @@ def process_enex(enex_path, config, converter, html_formatter, md_formatter, pdf
             return (True, False, title)
             
         except Exception as e:
-            logging.error(f"Error converting note '{title}': {e}", exc_info=False) # Reduce noise
+            logging.error(f"Error converting note '{title}': {e}", exc_info=True) # Full traceback for debugging
             return (False, False, title)
 
     # --- Retry Filter Logic (load before streaming) ---
@@ -186,7 +193,7 @@ def process_enex(enex_path, config, converter, html_formatter, md_formatter, pdf
     import signal
     
     # Simple timeout using alarm (Unix only, but works in Docker)
-    class TimeoutException(Exception):
+    class TimeoutException(BaseException):
         pass
     
     def timeout_handler(signum, frame):
@@ -316,7 +323,7 @@ def main():
     parser.add_argument('--pdf-fit-mode', action='store_true', help="Force content to fit within PDF page width (breaks tables/pre).")
     parser.add_argument('--retry-run', help="JSON file containing list of note titles to retry.")
     parser.add_argument('--fail-log', default="failed_notes.json", help="Output JSON file for failed/skipped notes.")
-    parser.add_argument('--timeout', type=int, default=60, help="Timeout in seconds for processing a single note.")
+    parser.add_argument('--timeout', type=int, default=360, help="Timeout in seconds for processing a single note.")
 
     args = parser.parse_args()
 
